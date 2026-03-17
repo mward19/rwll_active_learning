@@ -1,7 +1,9 @@
 import graphlearning as gl
 import os
+from collections import namedtuple
 import numpy as np
 import scipy.sparse as sparse
+import torch
 from copy import deepcopy
 import acquisitions
 
@@ -16,6 +18,93 @@ def get_models(G, model_names):
               }
 
     return [deepcopy(MODELS[name]) for name in model_names]
+
+def new_get_model(G, model_name):
+    # NOTE: no need for a deep copy because we're making it on the spot
+    if model_name == 'poisson':    return gl.ssl.poisson(G),  # poisson learning
+    elif model_name == 'laplace':  return gl.ssl.laplace(G), # laplace learning
+    elif model_name == 'rwll':     return gl.ssl.laplace(G, reweighting='poisson'),
+    elif model_name == 'rwll1000': return gl.ssl.laplace(G, reweighting='poisson', tau=0.1),
+    elif model_name == 'rwll0100': return gl.ssl.laplace(G, reweighting='poisson', tau=0.01),
+    elif model_name == 'rwll0010': return gl.ssl.laplace(G, reweighting='poisson', tau=0.001)
+    else:                          raise ValueError('Model name not found!')
+
+def new_load_graph(
+        X: np.ndarray, # The embeddings of the dataset derived from a neural network
+        dataset_name: str,
+        embeddings_info: namedtuple, # A named tuple (or dict, if you'd like?) containing the necessary information to determine the graph filename. NN name, epoch number, etc.
+        numeigs=200,
+        data_dir="data",
+        knn=0, # The number of clusters to use in KNN
+    ):
+    """
+    Using embeddings of the data (derived from a neural network in training),
+    construct a graph of the dataset.
+    """
+    # Construct the similarity graph
+    print(f"Constructing similarity graph for {dataset_name}")
+    if knn == 0:
+        knn = 20
+        if dataset_name == 'isolet':
+            print("Using knn = 5 for Isolet")
+            knn = 5
+        elif dataset_name in ['box', 'blobs']:
+            print(f"knn = 100, {dataset_name}")
+            knn = 100
+    
+    # TODO: Make the name involve the new NN and the epoch or something
+    embeddings_name = 'placeholder' # TODO: use embeddings_info to make a filename modifier, like f'{model_name}_{epoch_number}' # 
+    graph_filename = os.path.join(data_dir, f"{dataset_name.split('-')[0]}_{embeddings_name}_{knn}")
+
+    # TODO: what does this do?? haha
+    normalization = "combinatorial"
+    method = "lowrank"
+    if dataset_name.split("-")[0] in ["mnist", "fashionmnist", "cifar", "emnist", "mnistsmall", "fashionmnistsmall", "salinassub", "paviasub", "mnistimb", "fashionmnistimb", "emnistvcd"]:
+        normalization = "normalized"
+    # NOTE: this used to be labels.size, we changed it because in load_graph,
+    # `labels` contains labels for the *whole* dataset, so len(X) ought to be
+    # the same number
+    if len(X) < 100000: 
+        method = "exact"
+
+    # NOTE: commented this out since otherwise it will print way too many times
+    # print(f"Eigendata calculation will be {method}")
+
+    try:
+        G = gl.graph.load(graph_filename)
+        found = True
+    except:
+        # if metric == "hsi":
+        #     sim_name ="angular" # LAND does 100 in HSI
+        # else:
+        # NOTE: We (Matthew and Garrett) are not planning on working with hyperspectral imaging (hsi?) so just use the euclidean metric for knn.
+        sim_name = "euclidean"
+        knn_ind, knn_dist = gl.weightmatrix.knnsearch(X, knn, similarity=sim_name, metric=embeddings_name, dataset=dataset_name.split("-")[0])
+        W = gl.weightmatrix.knn(X, knn, knn_data=(knn_ind, knn_dist), metric=embeddings_name)
+        G = gl.graph(W)
+        found = False
+
+    if numeigs is not None:
+        eigdata = G.eigendata[normalization]['eigenvalues']
+        if eigdata is not None:
+            prev_numeigs = eigdata.size
+            if prev_numeigs >= numeigs:
+                print("Retrieving Eigendata...")
+            else:
+                print(f"Requested {numeigs} eigenvalues, but have only {prev_numeigs} stored. Recomputing Eigendata...")
+        else:
+            print(f"No Eigendata found, so computing {numeigs} eigenvectors...")
+
+        evals, evecs = G.eigen_decomp(normalization=normalization, k=numeigs, method=method)
+
+    G.save(graph_filename)
+    
+    # NOTE: we do not return the number of unique labels because this should be
+    # known upon loading the datas, which no longer happens here 
+    # if returnK:
+    #     return G, normalization, np.unique(clusters).size
+    
+    return G, normalization
 
 
 def load_graph(
@@ -36,6 +125,13 @@ def load_graph(
     returnX: X represents data points. Each row is a datapoint
     returnK: K is number of unique labels (clusters)
     knn: Number of nearest neighbors to use in graph construction. Lower `knn` means sparser graph
+
+    Returns:
+        G (gl.graph): the graph of the dataset
+        labels (np.ndarray): the labels of the data
+        trainset: labels of train data. Only used if doing a specific train/test split (?)
+        normalization (str): Unused right now I think. For the eigenvalue decomposition
+        X or K (optional): Either the data points or the unique cluster indices, depending on returnX or returnK
     """
     X, clusters = gl.datasets.load(dataset.split("-")[0], metric=metric)
     if dataset.split("-")[-1] == 'evenodd':
@@ -100,7 +196,6 @@ def load_graph(
             print(f"No Eigendata found, so computing {numeigs} eigenvectors...")
 
         evals, evecs = G.eigen_decomp(normalization=normalization, k=numeigs, method=method)
-
 
     G.save(graph_filename)
     
@@ -221,6 +316,17 @@ def get_graph_and_models(acq_funcs_names, model_names, args):
     print("Loading in Graph...")
     G, labels, trainset, normalization, K = load_graph(args.dataset, args.metric, maxnumeigs, returnK=True, knn=args.knn)
     
-    models = get_models(G, model_names)
+    models = get_models(G, model_names) 
     
     return models, labels, trainset, normalization,  K
+
+
+
+
+def new_get_graph(model_name, args, embeddings): #NOTE: this function should be called every x number of iterations to get the new graph using the updated embeddings
+
+    G, normalization = new_load_graph(embeddings, returnK=True, knn=args.knn)
+
+    model = new_get_model(G, model_name)
+
+    return model, normalization

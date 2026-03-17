@@ -20,7 +20,7 @@ from joblib import Parallel, delayed
 def active_learning_test(
         acq_func_name, 
         model_name, 
-        model,
+        nn_name, # NOTE: the name of the neural network to train with active learning
         *,
         args,
         labels,
@@ -28,10 +28,12 @@ def active_learning_test(
         normalization,
         K,
         RESULTS_DIR,
+        MODEL_UPDATE_INTERVAL = 10 # TODO: add this parameter to the config file and pass it from there
     ):
     '''
     Active learning test definition for parallelization.
     '''
+    # models, labels, trainset, normalization, K = get_graph_and_models(acq_funcs_names, model_names, args)
 
     # check if test already completed previously
     choices_run_savename = os.path.join(RESULTS_DIR, f"choices_{acq_func_name}_{model_name}.npy")
@@ -51,11 +53,12 @@ def active_learning_test(
         AL.acq_function.set_K(K)
 
 
-    # restrict candidate set to non-outliers, as determined by a KDE estimator
-    if trainset is None:
-        candidate_ind_all = np.arange(model.graph.num_nodes)
-    else:
-        candidate_ind_all = trainset.copy()
+    # TODO: we don't think we need this??? hopefully that is true.
+    # # restrict candidate set to non-outliers, as determined by a KDE estimator
+    # if trainset is None:
+    #     candidate_ind_all = np.arange(model.graph.num_nodes)
+    # else:
+    #     candidate_ind_all = trainset.copy()
         
     if acq_func_name[-3:] == 'kde':
         knn_ind, knn_dist = gl.weightmatrix.load_knn_data(args.dataset.split("-")[0], metric=args.metric)
@@ -73,6 +76,18 @@ def active_learning_test(
     
     # Perform active learning iterations
     for j in tqdm(range(args.iters), desc=f"{args.dataset}, {acq_func_name} test {it+1}/{len(seeds)}, seed = {seed}"):
+        
+        if j % MODEL_UPDATE_INTERVAL == 0: # NOTE: mod 0 so that on the first iteration, model actually gets calculated
+            # TODO: train/fine tune a neural network on all the data that is currently labeled
+            current_nn = fine_tune(current_nn, params) # TODO: implement a function like this
+            
+            # TODO: something like this. Use the neural network and some
+            # hyperparameters like the layer of the network to calculate embeddings
+            # of the data using the neural network
+            embeddings = get_embeddings(current_nn, layer_num)
+
+            model, normalization = new_get_graph(model_name, args, embeddings)
+
         query_points = AL.select_queries(candidate_ind=np.setdiff1d(candidate_ind_all, AL.labeled_ind)) 
         query_labels = labels[query_points] 
         AL.update(query_points, query_labels)
@@ -87,6 +102,8 @@ def active_learning_test(
         # update accuracies
         acc = np.append(acc, gl.ssl.ssl_accuracy(AL.model.predict(), labels, AL.labeled_ind))
 
+        # TODO: calculate the accuracy of the neural network every few iterations!
+
     acc_dir = os.path.join(RESULTS_DIR, model_name)
     if not os.path.exists(acc_dir):
         os.makedirs(acc_dir)
@@ -94,6 +111,15 @@ def active_learning_test(
     np.save(os.path.join(RESULTS_DIR, f"choices_{acq_func_name}_{model_name}.npy"), AL.labeled_ind)
     return
 
+
+# Active learning model using the existing data (unchanging)
+
+# Start with AL model using existing data
+# Train a NN on labeled data
+# Use NN data embeddings to create the next AL model
+
+# Train a NN on labeled data
+# Use NN data embeddings to create the next AL model
 
 
 if __name__ == "__main__":
@@ -118,12 +144,12 @@ if __name__ == "__main__":
 
     # Define ssl models and acquisition functions from configuration file 
     ACQS_MODELS = [name for name in config["acqs_models"] if name.split(" ")[-1][:4] != "LAND"]
+    NN_NAMES = [name for name in config["neural_networks"]] # NOTE: this will need to be added to the config file
     acq_funcs_names = [name.split(" ")[0] for name in ACQS_MODELS]
-    
+
 
     # load in graph and models that will be used in this run of tests
     model_names = [name.split(" ")[1] for name in ACQS_MODELS]
-    models, labels, trainset, normalization, K = get_graph_and_models(acq_funcs_names, model_names, args)
     
     
     # if manually pass in K value in command line then overwrite value of K
@@ -131,8 +157,8 @@ if __name__ == "__main__":
         K = args.K     
     
     # use only enough cores as length of models
-    if args.numcores > len(models):
-        args.numcores = len(models)
+    if args.numcores > len(model_names):
+        args.numcores = len(model_names)
 
 
     # define the seed set for the iterations. Allows for defining in the configuration file
@@ -156,11 +182,11 @@ if __name__ == "__main__":
         print("------Starting Active Learning Tests-------")
 
         
-        def al_test(acq_name, mdlname, mdl):
+        def al_test(acq_name, mdlname, nn_name):
             return active_learning_test(
                 acq_name, 
                 mdlname, 
-                mdl,
+                nn_name, # NOTE: a new parameter. The name of the neural network to train
                 args=args,
                 labels=labels,
                 labeled_ind=labeled_ind,
@@ -170,8 +196,8 @@ if __name__ == "__main__":
             )
         
         if not args.debug:
-            Parallel(n_jobs=args.numcores)(delayed(al_test)(acq_name, mdlname, mdl) for acq_name, mdlname, mdl \
-                in zip(acq_funcs_names, model_names, models))
+            Parallel(n_jobs=args.numcores)(delayed(al_test)(acq_name, mdlname, NN_NAMES) for acq_name, mdlname, nn_name \
+                in zip(acq_funcs_names, model_names, nn_name))
         else:
-            for acq_name, mdlname, mdl in zip(acq_funcs_names, model_names, models):
-                al_test(acq_name, mdlname, mdl)
+            for acq_name, mdlname, nn_name in zip(acq_funcs_names, model_names, NN_NAMES):
+                al_test(acq_name, mdlname, nn_name)
