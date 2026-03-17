@@ -108,6 +108,7 @@ if __name__ == "__main__":
     parser.add_argument("--K", type=int, default=0)
     parser.add_argument("--cheatK", type=int, default=50)
     parser.add_argument("--knn", type=int, default=0)
+    parser.add_argument("--debug", action="store_true") # To not parallelize if debugging
     args = parser.parse_args()
 
     # load in configuration file
@@ -154,9 +155,7 @@ if __name__ == "__main__":
 
         print("------Starting Active Learning Tests-------")
 
-        # Parallel(n_jobs=args.numcores)(delayed(active_learning_test)(acq_name, mdlname, mdl) for acq_name, mdlname, mdl \
-        #         in zip(acq_funcs_names, model_names, models))
-        # Temporarily deactivate parallelization for debugging
+        
         def al_test(acq_name, mdlname, mdl):
             return active_learning_test(
                 acq_name, 
@@ -169,5 +168,10 @@ if __name__ == "__main__":
                 K=K,
                 RESULTS_DIR=RESULTS_DIR,
             )
-        for acq_name, mdlname, mdl in zip(acq_funcs_names, model_names, models):
-            al_test(acq_name, mdlname, mdl)
+        
+        if not args.debug:
+            Parallel(n_jobs=args.numcores)(delayed(al_test)(acq_name, mdlname, mdl) for acq_name, mdlname, mdl \
+                in zip(acq_funcs_names, model_names, models))
+        else:
+            for acq_name, mdlname, mdl in zip(acq_funcs_names, model_names, models):
+                al_test(acq_name, mdlname, mdl)
