@@ -1,5 +1,6 @@
 *.ipynb*
 results*/
+data/
 
 __pycache__
 .venv

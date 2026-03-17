@@ -18,7 +18,25 @@ def get_models(G, model_names):
     return [deepcopy(MODELS[name]) for name in model_names]
 
 
-def load_graph(dataset, metric, numeigs=200, data_dir="data", returnX=False, returnK=False, knn=0):
+def load_graph(
+        dataset: str, 
+        metric: str, 
+        numeigs=200, 
+        data_dir="data", 
+        returnX=False, 
+        returnK=False, 
+        knn=0 
+    ):
+    """
+    Get a graph of the dataset to do active learning with.
+
+    dataset: The desired dataset's name
+    metric: What kind of data to load from the dataset (raw data or embeddings of some kind)
+    numeigs: Seem to be unused (results from eigen decomp not returned)
+    returnX: X represents data points. Each row is a datapoint
+    returnK: K is number of unique labels (clusters)
+    knn: Number of nearest neighbors to use in graph construction. Lower `knn` means sparser graph
+    """
     X, clusters = gl.datasets.load(dataset.split("-")[0], metric=metric)
     if dataset.split("-")[-1] == 'evenodd':
         labels = clusters % 2

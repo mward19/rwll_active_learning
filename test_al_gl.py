@@ -17,6 +17,85 @@ from utils import *
 
 from joblib import Parallel, delayed
 
+def active_learning_test(
+        acq_func_name, 
+        model_name, 
+        model,
+        *,
+        args,
+        labels,
+        labeled_ind,
+        normalization,
+        K,
+        RESULTS_DIR,
+    ):
+    '''
+    Active learning test definition for parallelization.
+    '''
+
+    # check if test already completed previously
+    choices_run_savename = os.path.join(RESULTS_DIR, f"choices_{acq_func_name}_{model_name}.npy")
+    if os.path.exists(choices_run_savename):
+        print(f"Found choices for {acq_func_name} in {model_name}")
+        return
+    
+    # if need to decay tau, calculate mu from epsilon and 2K. K = # of clusters.
+    if "decaytau" in acq_func_name in acq_func_name:
+        eps = 1e-9
+        mu = (eps / model.tau)**(.5/K)
+    
+    # fetch active_learning object
+    AL = get_active_learner(acq_func_name, model, labeled_ind, labels[labeled_ind], normalization, args)
+    # If have a proportional sampling acquisition function then set K accordingly
+    if "prop" in acq_func_name:
+        AL.acq_function.set_K(K)
+
+
+    # restrict candidate set to non-outliers, as determined by a KDE estimator
+    if trainset is None:
+        candidate_ind_all = np.arange(model.graph.num_nodes)
+    else:
+        candidate_ind_all = trainset.copy()
+        
+    if acq_func_name[-3:] == 'kde':
+        knn_ind, knn_dist = gl.weightmatrix.load_knn_data(args.dataset.split("-")[0], metric=args.metric)
+        d = np.max(knn_dist,axis=1)
+        kde = (d/d.max())**(-1)
+        outlier_inds = np.where(kde < np.percentile(kde, 10))[0] # throw out 10% of "outliers"
+        candidate_ind_all = np.setdiff1d(candidate_ind_all, outlier_inds)
+        print(f"Set candidate_ind for active learner of {acq_func_name} to throw out outliers")
+    
+    print(f"{acq_func_name}, training_set size = {candidate_ind_all.size}, dataset size = {model.graph.num_nodes}")
+
+    # Calculate initial accuracy
+    acc = np.array([gl.ssl.ssl_accuracy(AL.model.predict(), labels, AL.labeled_ind)])
+    
+    
+    # Perform active learning iterations
+    for j in tqdm(range(args.iters), desc=f"{args.dataset}, {acq_func_name} test {it+1}/{len(seeds)}, seed = {seed}"):
+        query_points = AL.select_queries(candidate_ind=np.setdiff1d(candidate_ind_all, AL.labeled_ind)) 
+        query_labels = labels[query_points] 
+        AL.update(query_points, query_labels)
+        
+        # if need to decay tau in the model, then do so before updating the model
+        if "decaytau" in acq_func_name:
+            if model.tau[0] != 0:
+                model.tau = mu*np.copy(model.tau)
+                if model.tau[0] < eps:
+                    model.tau = np.zeros_like(model.tau)
+        
+        # update accuracies
+        acc = np.append(acc, gl.ssl.ssl_accuracy(AL.model.predict(), labels, AL.labeled_ind))
+
+    acc_dir = os.path.join(RESULTS_DIR, model_name)
+    if not os.path.exists(acc_dir):
+        os.makedirs(acc_dir)
+    np.save(os.path.join(acc_dir, f"acc_{acq_func_name}_{model_name}.npy"), acc)
+    np.save(os.path.join(RESULTS_DIR, f"choices_{acq_func_name}_{model_name}.npy"), AL.labeled_ind)
+    return
+
+
+
 if __name__ == "__main__":
     parser = ArgumentParser(description="Run Large Tests in Parallel of Active Learning Test for Graph Learning")
     parser.add_argument("--dataset", type=str, default='mnist-mod3')
@@ -73,74 +152,22 @@ if __name__ == "__main__":
             os.makedirs(RESULTS_DIR)
         np.save(os.path.join(RESULTS_DIR, "init_labeled.npy"), labeled_ind) # save initially labeled points that are common to each test
 
-
-        def active_learning_test(acq_func_name, model_name, model):
-            '''
-            Active learning test definition for parallelization.
-            '''
-
-            # check if test already completed previously
-            choices_run_savename = os.path.join(RESULTS_DIR, f"choices_{acq_func_name}_{model_name}.npy")
-            if os.path.exists(choices_run_savename):
-                print(f"Found choices for {acq_func_name} in {model_name}")
-                return
-            
-            # if need to decay tau, calculate mu from epsilon and 2K. K = # of clusters.
-            if "decaytau" in acq_func_name in acq_func_name:
-                eps = 1e-9
-                mu = (eps / model.tau)**(.5/K)
-            
-            # fetch active_learning object
-            AL = get_active_learner(acq_func_name, model, labeled_ind, labels[labeled_ind], normalization, args)
-            # If have a proportional sampling acquisition function then set K accordingly
-            if "prop" in acq_func_name:
-                AL.acq_function.set_K(K)
-
-
-            # restrict candidate set to non-outliers, as determined by a KDE estimator
-            if trainset is None:
-                candidate_ind_all = np.arange(model.graph.num_nodes)
-            else:
-                candidate_ind_all = trainset.copy()
-                
-            if acq_func_name[-3:] == 'kde':
-                knn_ind, knn_dist = gl.weightmatrix.load_knn_data(args.dataset.split("-")[0], metric=args.metric)
-                d = np.max(knn_dist,axis=1)
-                kde = (d/d.max())**(-1)
-                outlier_inds = np.where(kde < np.percentile(kde, 10))[0] # throw out 10% of "outliers"
-                candidate_ind_all = np.setdiff1d(candidate_ind_all, outlier_inds)
-                print(f"Set candidate_ind for active learner of {acq_func_name} to throw out outliers")
-            
-            print(f"{acq_func_name}, training_set size = {candidate_ind_all.size}, dataset size = {model.graph.num_nodes}")
-
-            # Calculate initial accuracy
-            acc = np.array([gl.ssl.ssl_accuracy(AL.model.predict(), labels, AL.labeled_ind)])
-            
-            
-            # Perform active learning iterations
-            for j in tqdm(range(args.iters), desc=f"{args.dataset}, {acq_func_name} test {it+1}/{len(seeds)}, seed = {seed}"):
-                query_points = AL.select_queries(candidate_ind=np.setdiff1d(candidate_ind_all, AL.labeled_ind)) 
-                query_labels = labels[query_points] 
-                AL.update(query_points, query_labels)
-                
-                # if need to decay tau in the model, then do so before updating the model
-                if "decaytau" in acq_func_name:
-                    if model.tau[0] != 0:
-                        model.tau = mu*np.copy(model.tau)
-                        if model.tau[0] < eps:
-                            model.tau = np.zeros_like(model.tau)
-                
-                # update accuracies
-                acc = np.append(acc, gl.ssl.ssl_accuracy(AL.model.predict(), labels, AL.labeled_ind))
-
-            acc_dir = os.path.join(RESULTS_DIR, model_name)
-            if not os.path.exists(acc_dir):
-                os.makedirs(acc_dir)
-            np.save(os.path.join(acc_dir, f"acc_{acq_func_name}_{model_name}.npy"), acc)
-            np.save(os.path.join(RESULTS_DIR, f"choices_{acq_func_name}_{model_name}.npy"), AL.labeled_ind)
-            return
-
         print("------Starting Active Learning Tests-------")
 
-        Parallel(n_jobs=args.numcores)(delayed(active_learning_test)(acq_name, mdlname, mdl) for acq_name, mdlname, mdl \
-                in zip(acq_funcs_names, model_names, models))
+        # Parallel(n_jobs=args.numcores)(delayed(active_learning_test)(acq_name, mdlname, mdl) for acq_name, mdlname, mdl \
+        #         in zip(acq_funcs_names, model_names, models))
+        # Temporarily deactivate parallelization for debugging
+        def al_test(acq_name, mdlname, mdl):
+            return active_learning_test(
+                acq_name, 
+                mdlname, 
+                mdl,
+                args=args,
+                labels=labels,
+                labeled_ind=labeled_ind,
+                normalization=normalization,
+                K=K,
+                RESULTS_DIR=RESULTS_DIR,
+            )
+        for acq_name, mdlname, mdl in zip(acq_funcs_names, model_names, models):
+            al_test(acq_name, mdlname, mdl)
