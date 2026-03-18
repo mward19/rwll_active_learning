@@ -23,9 +23,9 @@ def active_learning_test(
         nn_name, # NOTE: the name of the neural network to train with active learning
         *,
         args,
+        data, # The features of the data (both labeled and unlabeled)
         labels,
         labeled_ind,
-        normalization,
         K,
         RESULTS_DIR,
         MODEL_UPDATE_INTERVAL = 10 # TODO: add this parameter to the config file and pass it from there
@@ -79,14 +79,19 @@ def active_learning_test(
         
         if j % MODEL_UPDATE_INTERVAL == 0: # NOTE: mod 0 so that on the first iteration, model actually gets calculated
             # TODO: train/fine tune a neural network on all the data that is currently labeled
-            current_nn = fine_tune(current_nn, params) # TODO: implement a function like this
+            current_nn = fine_tune( # TODO: implement a function like this
+                current_nn, 
+                data[labeled_ind], 
+                labels[labeled_ind], 
+                params # TODO: training parameters
+            ) 
             
             # TODO: something like this. Use the neural network and some
             # hyperparameters like the layer of the network to calculate embeddings
             # of the data using the neural network
-            embeddings = get_embeddings(current_nn, layer_num)
+            embeddings = get_embeddings(current_nn, layer_num, data)
 
-            model, normalization = new_get_graph(model_name, args, embeddings)
+            model, normalization = new_get_graph_and_model(model_name, args, embeddings)
 
         query_points = AL.select_queries(candidate_ind=np.setdiff1d(candidate_ind_all, AL.labeled_ind)) 
         query_labels = labels[query_points] 
@@ -99,7 +104,7 @@ def active_learning_test(
                 if model.tau[0] < eps:
                     model.tau = np.zeros_like(model.tau)
         
-        # update accuracies
+        # update accuracies of the active learning model
         acc = np.append(acc, gl.ssl.ssl_accuracy(AL.model.predict(), labels, AL.labeled_ind))
 
         # TODO: calculate the accuracy of the neural network every few iterations!
@@ -111,6 +116,20 @@ def active_learning_test(
     np.save(os.path.join(RESULTS_DIR, f"choices_{acq_func_name}_{model_name}.npy"), AL.labeled_ind)
     return
 
+def load_dataset(dataset_name):
+    X, clusters = gl.datasets.load(
+        dataset_name.split("-")[0], 
+        # metric=metric # NOTE: We don't think we need this, since we're getting our own embeddings from the raw data
+    )
+    if dataset_name.split("-")[-1] == 'evenodd':
+        labels = clusters % 2
+    elif dataset_name.split("-")[-1][:3] == "mod":
+        modnum = int(dataset_name[-1])
+        labels = clusters % modnum
+    else:
+        labels = clusters
+    
+    return X, labels
 
 # Active learning model using the existing data (unchanging)
 
@@ -150,7 +169,9 @@ if __name__ == "__main__":
 
     # load in graph and models that will be used in this run of tests
     model_names = [name.split(" ")[1] for name in ACQS_MODELS]
-    
+
+    # NOTE: before, data was loaded with get_graph_and_models. Now loading it here.
+    data, labels = load_dataset(args.dataset)
     
     # if manually pass in K value in command line then overwrite value of K
     if args.K != 0:
@@ -188,9 +209,9 @@ if __name__ == "__main__":
                 mdlname, 
                 nn_name, # NOTE: a new parameter. The name of the neural network to train
                 args=args,
+                data=data,
                 labels=labels,
                 labeled_ind=labeled_ind,
-                normalization=normalization,
                 K=K,
                 RESULTS_DIR=RESULTS_DIR,
             )

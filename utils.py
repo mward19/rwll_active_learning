@@ -56,7 +56,7 @@ def new_load_graph(
     embeddings_name = 'placeholder' # TODO: use embeddings_info to make a filename modifier, like f'{model_name}_{epoch_number}' # 
     graph_filename = os.path.join(data_dir, f"{dataset_name.split('-')[0]}_{embeddings_name}_{knn}")
 
-    # TODO: what does this do?? haha
+    # NOTE: what does this do?? haha
     normalization = "combinatorial"
     method = "lowrank"
     if dataset_name.split("-")[0] in ["mnist", "fashionmnist", "cifar", "emnist", "mnistsmall", "fashionmnistsmall", "salinassub", "paviasub", "mnistimb", "fashionmnistimb", "emnistvcd"]:
@@ -323,7 +323,7 @@ def get_graph_and_models(acq_funcs_names, model_names, args):
 
 
 
-def new_get_graph(model_name, args, embeddings): #NOTE: this function should be called every x number of iterations to get the new graph using the updated embeddings
+def new_get_graph_and_model(model_name, args, embeddings): #NOTE: this function should be called every x number of iterations to get the new graph using the updated embeddings
 
     G, normalization = new_load_graph(embeddings, returnK=True, knn=args.knn)
 
