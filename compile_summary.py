@@ -21,7 +21,8 @@ if __name__ == "__main__":
         os.makedirs(overall_results_dir)
 
     results_models_directories = glob(os.path.join(args.resultsdir, f"{args.dataset}_results_*_{args.iters}", "*/"))
-    acc_model_names_list = np.unique([fpath.split("/")[-2] for fpath in results_models_directories])
+    # acc_model_names_list = np.unique([fpath.split("/")[-2] for fpath in results_models_directories]) # This was designed for mac
+    acc_model_names_list = np.unique([os.path.basename(os.path.dirname(fpath)) for fpath in results_models_directories]) # This works on windows (and should generally i think)
     for acc_model_name in tqdm(acc_model_names_list, desc=f"Saving results over all runs to: {overall_results_dir}", total=len(acc_model_names_list)):
         overall_results_file = os.path.join(overall_results_dir, f"{acc_model_name}_stats.csv")
         acc_files = glob(os.path.join(args.resultsdir, f"{args.dataset}_results_*_{args.iters}", f"{acc_model_name}", "accs.csv"))
@@ -83,7 +84,9 @@ if __name__ == "__main__":
         os.makedirs(overall_results_dir)
 
     results_models_directories = glob(os.path.join(args.resultsdir, f"{args.dataset}_results_*_{args.iters}", "*/"))
-    acc_model_names_list = np.unique([fpath.split("/")[-2] for fpath in results_models_directories])
+    # acc_model_names_list = np.unique([fpath.split("/")[-2] for fpath in results_models_directories]) # This was designed for mac
+    acc_model_names_list = np.unique([os.path.basename(os.path.dirname(fpath)) for fpath in results_models_directories]) # This works on windows (and should generally i think)
+
     for acc_model_name in tqdm(acc_model_names_list, desc=f"Saving results over all runs to: {overall_results_dir}", total=len(acc_model_names_list)):
         overall_results_file = os.path.join(overall_results_dir, f"{acc_model_name}_stats_metrics.csv")
         metric_files = glob(os.path.join(args.resultsdir, f"{args.dataset}_results_*_{args.iters}", f"{acc_model_name}", "metrics.csv"))
