@@ -14,7 +14,7 @@ from scipy.special import softmax
 from functools import reduce
 from utils import *
 
-from utils_representations import get_representation_config, get_representation_tag
+from utils_representations import get_representation_config, get_representation_tag, representation_depends_on_seed
 
 
 from joblib import Parallel, delayed
@@ -53,16 +53,26 @@ if __name__ == "__main__":
 
     # load in graph and models that will be used in this run of tests
     model_names = [name.split(" ")[1] for name in ACQS_MODELS]
-    models, labels, trainset, normalization, K = get_graph_and_models(acq_funcs_names, model_names, args, rep_cfg) # Changed
-    
-    
-    # if manually pass in K value in command line then overwrite value of K
-    if args.K != 0:
-        K = args.K     
-    
-    # use only enough cores as length of models
-    if args.numcores > len(models):
-        args.numcores = len(models)
+
+    # For seed-independent reps (regular/noise/pca), build once.
+    # For seed-dependent reps (nn), build inside the seed loop after labeled_ind is known.
+    if not representation_depends_on_seed(rep_cfg):
+        models, labels, trainset, normalization, K = get_graph_and_models(
+            acq_funcs_names,
+            model_names,
+            args,
+            rep_cfg=rep_cfg,
+        )
+    else:
+        models = None
+        labels = None
+        trainset = None
+        normalization = None
+        K = None
+
+    # use only enough cores as length of model list
+    if args.numcores > len(model_names):
+        args.numcores = len(model_names)
 
 
     # define the seed set for the iterations. Allows for defining in the configuration file
@@ -71,15 +81,44 @@ if __name__ == "__main__":
     except:
         seeds = [0]
         print(f"Did not find 'seeds' in config file, defaulting to : {seeds}")
-
+        
+    rate = config.get("initial_labels_per_class", 1)
+    
 
     # Iterations for the different tests
     for it, seed in enumerate(seeds):
+        # For seed-dependent reps, we need labels before generating the trainset.
+        # Load labels cheaply from base graph/data if they are not already available.
+        if labels is None:
+            _, labels_tmp, _, _, _ = load_graph(
+                args.dataset,
+                args.metric,
+                numeigs=None,
+                knn=args.knn,
+                rep_cfg=None,
+                returnK=True,
+            )
+            labels = labels_tmp
+
         # get initially labeled indices, based on the given seed
-        labeled_ind = gl.trainsets.generate(labels, rate=1, seed=seed)
+        labeled_ind = gl.trainsets.generate(labels, rate=rate, seed=seed)
+
+        # For seed-dependent reps (nn), now build the graph/models using this seed's initial labels
+        if representation_depends_on_seed(rep_cfg):
+            models, labels, trainset, normalization, K = get_graph_and_models(
+                acq_funcs_names,
+                model_names,
+                args,
+                rep_cfg=rep_cfg,
+                labeled_ind=labeled_ind,
+                seed=seed,
+            )
+
+        # if manually pass in K value in command line then overwrite value of K
+        K_current = args.K if args.K != 0 else K
 
         # define the results directory for this seed's test
-        RESULTS_DIR = os.path.join(args.resultsdir, f"{args.dataset}_{rep_tag}_results_{seed}_{args.iters}") # Changed
+        RESULTS_DIR = os.path.join(args.resultsdir, f"{args.dataset}_{rep_tag}_results_{seed}_{args.iters}")
         if not os.path.exists(RESULTS_DIR):
             os.makedirs(RESULTS_DIR)
         np.save(os.path.join(RESULTS_DIR, "init_labeled.npy"), labeled_ind) # save initially labeled points that are common to each test
@@ -99,13 +138,13 @@ if __name__ == "__main__":
             # if need to decay tau, calculate mu from epsilon and 2K. K = # of clusters.
             if "decaytau" in acq_func_name in acq_func_name:
                 eps = 1e-9
-                mu = (eps / model.tau)**(.5/K)
+                mu = (eps / model.tau)**(.5 / K_current)
             
             # fetch active_learning object
             AL = get_active_learner(acq_func_name, model, labeled_ind, labels[labeled_ind], normalization, args)
             # If have a proportional sampling acquisition function then set K accordingly
             if "prop" in acq_func_name:
-                AL.acq_function.set_K(K)
+                AL.acq_function.set_K(K_current)
 
 
             # restrict candidate set to non-outliers, as determined by a KDE estimator

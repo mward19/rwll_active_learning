@@ -13,10 +13,13 @@ from glob import glob
 from scipy.special import softmax
 from functools import reduce
 from utils import *
-from utils_representations import get_representation_config, get_representation_tag
+from utils_representations import (
+    get_representation_config,
+    get_representation_tag,
+    representation_depends_on_seed,
+)
 
 from joblib import Parallel, delayed
-
 
 
 if __name__ == "__main__":
@@ -34,28 +37,66 @@ if __name__ == "__main__":
     with open(args.config, 'r') as f:
         config = yaml.safe_load(f)
 
-    #-----
-    # New representation tagging
+    # representation tagging
     rep_cfg = get_representation_config(config)
     rep_tag = get_representation_tag(rep_cfg)
     print("Using representation:", rep_tag)
-    #-----
 
-    G, labels, trainset, normalization = load_graph(args.dataset, args.metric, numeigs=None, knn=args.knn, rep_cfg=rep_cfg) # don't compute any eigenvalues  # Changed
     model_names = [name for name in config["acc_models"] if name[:3] != "gcn"]
-    models = get_models(G, model_names)
-    models_dict = {name:model for name, model in zip(model_names, models)}
-    results_directories = glob(os.path.join(args.resultsdir, f"{args.dataset}_{rep_tag}_results_*_{args.iters}/")) # Changed
+    results_directories = glob(
+        os.path.join(args.resultsdir, f"{args.dataset}_{rep_tag}_results_*_{args.iters}/")
+    )
     acqs_models = config["acqs_models"]
-    
-    
 
+    # For seed-independent reps, build the graph/models once.
+    # For seed-dependent reps (nn), build them inside the RESULTS_DIR loop.
+    global_models_dict = None
+    global_labels = None
+
+    if not representation_depends_on_seed(rep_cfg):
+        G, labels, trainset, normalization = load_graph(
+            args.dataset,
+            args.metric,
+            numeigs=None,
+            knn=args.knn,
+            rep_cfg=rep_cfg,
+        )
+        models = get_models(G, model_names)
+        global_models_dict = {name: model for name, model in zip(model_names, models)}
+        global_labels = labels
 
     for out_num, RESULTS_DIR in enumerate(results_directories):
         choices_fnames = glob(os.path.join(RESULTS_DIR, "choices_*.npy"))
-        choices_fnames = [fname for fname in choices_fnames if " ".join(fname.split("_")[-2:]).split(".")[0] in acqs_models ]
-        labeled_ind = np.load(os.path.join(RESULTS_DIR, "init_labeled.npy")) # initially labeled points that are common to all acq_func:gbssl modelname pairs
-        
+        choices_fnames = [
+            fname for fname in choices_fnames
+            if " ".join(fname.split("_")[-2:]).split(".")[0] in acqs_models
+        ]
+        labeled_ind = np.load(os.path.join(RESULTS_DIR, "init_labeled.npy"))
+
+        # For seed-dependent reps (nn), rebuild/load the graph for this seed's
+        # initial labeled set. For seed-independent reps, reuse the global graph.
+        if representation_depends_on_seed(rep_cfg):
+            seed = int(
+                os.path.basename(os.path.normpath(RESULTS_DIR))
+                .split("_results_")[-1]
+                .split("_")[0]
+            )
+
+            G, labels, trainset, normalization = load_graph(
+                args.dataset,
+                args.metric,
+                numeigs=None,
+                knn=args.knn,
+                rep_cfg=rep_cfg,
+                labeled_ind=labeled_ind,
+                seed=seed,
+            )
+            models = get_models(G, model_names)
+            models_dict = {name: model for name, model in zip(model_names, models)}
+        else:
+            labels = global_labels
+            models_dict = global_models_dict
+
         for num, acc_model_name in enumerate(models_dict.keys()):
             acc_dir = os.path.join(RESULTS_DIR, acc_model_name)
             if not os.path.exists(acc_dir):
@@ -79,12 +120,12 @@ if __name__ == "__main__":
 
                 # get copy of model on this cpu
                 model = deepcopy(models_dict[acc_model_name])
-                
+
                 # Compute accuracies at each sequential subset of choices
                 acc = np.array([])
-                for j in tqdm(range(labeled_ind.size,choices.size+1), desc=f"Computing Acc of {acq_func_name}-{modelname}"):
+                for j in tqdm(range(labeled_ind.size, choices.size + 1), desc=f"Computing Acc of {acq_func_name}-{modelname}"):
                     train_ind = choices[:j]
-                    u = model.fit(train_ind, labels[train_ind])
+                    model.fit(train_ind, labels[train_ind])
                     acc = np.append(acc, gl.ssl.ssl_accuracy(model.predict(), labels, train_ind))
 
                 # save accuracy results to corresponding filename
@@ -93,8 +134,10 @@ if __name__ == "__main__":
 
             print(f"-------- Computing Accuracies in {acc_model_name}, {num+1}/{len(models_dict)} in {RESULTS_DIR} ({out_num+1}/{len(results_directories)}) -------")
 
-            Parallel(n_jobs=args.numcores)(delayed(compute_accuracies)(choices_fname) for choices_fname \
-                    in choices_fnames)
+            Parallel(n_jobs=args.numcores)(
+                delayed(compute_accuracies)(choices_fname)
+                for choices_fname in choices_fnames
+            )
             print()
 
         # Consolidate results
@@ -111,15 +154,15 @@ if __name__ == "__main__":
                 columns[acq_func_name + " : " + modelname] = acc
                 if acc.size > max_length:
                     max_length = acc.size
-            
+
             for k, col in columns.items():
                 if col.size < max_length:
                     print(f"found col = {k} of too short lenghth, padding with nans")
                     columns[k] = np.concatenate((col, np.full(max_length - col.size, fill_value=np.nan)))
-            
+
             acc_df = pd.DataFrame(columns)
             acc_df.to_csv(os.path.join(acc_dir, "accs.csv"), index=None)
 
-        print("-"*40)
-        print("-"*40)
+        print("-" * 40)
+        print("-" * 40)
     print()
