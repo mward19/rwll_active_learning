@@ -2,7 +2,9 @@ import graphlearning as gl
 import numpy as np
 from sklearn.decomposition import PCA
 
-
+import torch
+import torch.nn as nn
+from torch.utils.data import DataLoader, TensorDataset
 
 
 def get_representation_config(config: dict) -> dict:
@@ -25,6 +27,9 @@ def get_representation_config(config: dict) -> dict:
         "random_seed": int(rep.get("random_seed", 0)),
     }
 
+def representation_depends_on_seed(rep_cfg: dict) -> bool:
+    return rep_cfg["type"] == "nn"
+
 def get_representation_tag(rep_cfg: dict) -> str:
     """
     Return a short tag for filenames/results/caches.
@@ -43,13 +48,118 @@ def get_representation_tag(rep_cfg: dict) -> str:
         return f"pca{ncomp}"
 
     if rep_type == "nn":
-        nn_name = rep_cfg["nn_name"] or "stub"
+        nn_name = rep_cfg["nn_name"] or "mlp"
         nn_layer = rep_cfg["nn_layer"]
-        layer_tag = "none" if nn_layer is None else str(nn_layer)
-        return f"nn_{nn_name}_layer{layer_tag}"
+        return f"nn_{nn_name}_h{nn_layer}"
 
     raise ValueError(f"Unknown representation type: {rep_type}")
 
+
+# NN model helpers
+class MLPEmbeddingNet(nn.Module):
+    def __init__(self, input_dim: int, hidden_dim: int, num_classes: int):
+        super().__init__()
+        self.fc1 = nn.Linear(input_dim, hidden_dim)
+        self.fc2 = nn.Linear(hidden_dim, hidden_dim)
+        self.fc3 = nn.Linear(hidden_dim, hidden_dim)
+        self.fc4 = nn.Linear(hidden_dim, hidden_dim)
+        self.relu = nn.ReLU()
+        self.classifier = nn.Linear(hidden_dim, num_classes)
+
+    def get_embedding(self, x: torch.Tensor, layer: int) -> torch.Tensor:
+        x = self.relu(self.fc1(x))
+        if layer == 1:
+            return x
+
+        x = self.relu(self.fc2(x))
+        if layer == 2:
+            return x
+
+        x = self.relu(self.fc3(x))
+        if layer == 3:
+            return x
+
+        x = self.relu(self.fc4(x))
+        if layer == 4:
+            return x
+
+        raise ValueError(f"nn_layer must be 1, 2, 3, or 4. Got {layer}.")
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        x = self.relu(self.fc1(x))
+        x = self.relu(self.fc2(x))
+        x = self.relu(self.fc3(x))
+        x = self.relu(self.fc4(x))
+        return self.classifier(x)
+
+def get_torch_device() -> torch.device:
+    return torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+def train_mlp_embedding_model(
+    X_labeled: np.ndarray,
+    y_labeled: np.ndarray,
+    rep_cfg: dict,
+) -> MLPEmbeddingNet:
+    if rep_cfg["nn_name"] != "mlp":
+        raise NotImplementedError(f"NN type '{rep_cfg['nn_name']}' is not implemented yet.")
+
+    device = get_torch_device()
+    seed = rep_cfg.get("random_seed", 0)
+    torch.manual_seed(seed)
+    np.random.seed(seed)
+
+    X_labeled = np.asarray(X_labeled, dtype=np.float32)
+    y_labeled = np.asarray(y_labeled, dtype=np.int64)
+
+    input_dim = X_labeled.shape[1]
+    num_classes = len(np.unique(y_labeled))
+    hidden_dim = 128
+    epochs = 20
+    batch_size = 64
+    lr = 1e-3
+
+    model = MLPEmbeddingNet(input_dim, hidden_dim, num_classes).to(device)
+
+    dataset = TensorDataset(
+        torch.from_numpy(X_labeled),
+        torch.from_numpy(y_labeled),
+    )
+    loader = DataLoader(dataset, batch_size=min(batch_size, len(dataset)), shuffle=True)
+
+    optimizer = torch.optim.Adam(model.parameters(), lr=lr)
+    criterion = nn.CrossEntropyLoss()
+
+    print(f"[NN] Training {rep_cfg['nn_name']} on {len(X_labeled)} labeled points")
+    print(f"[NN] Input dim = {X_labeled.shape[1]}, output classes = {len(np.unique(y_labeled))}")
+    model.train()
+    for _ in range(epochs):
+        for xb, yb in loader:
+            xb = xb.to(device)
+            yb = yb.to(device)
+
+            optimizer.zero_grad()
+            logits = model(xb)
+            loss = criterion(logits, yb)
+            loss.backward()
+            optimizer.step()
+
+    return model
+
+def extract_mlp_embeddings(
+    model: MLPEmbeddingNet,
+    X_all: np.ndarray,
+    layer: int,
+) -> np.ndarray:
+    device = next(model.parameters()).device
+    X_all = np.asarray(X_all, dtype=np.float32)
+
+    model.eval()
+    with torch.no_grad():
+        x = torch.from_numpy(X_all).to(device)
+        emb = model.get_embedding(x, layer)
+        emb = emb.cpu().numpy()
+
+    return emb
 
 def get_base_features(dataset, metric):
     X, clusters = gl.datasets.load(dataset.split("-")[0], metric=metric)
@@ -96,15 +206,27 @@ def get_pca_features(X: np.ndarray, rep_cfg: dict) -> np.ndarray:
 
 def get_nn_features(X: np.ndarray, rep_cfg: dict, labels=None, labeled_ind=None) -> np.ndarray:
     """
-    Placeholder for future NN embeddings.
-
-    For now, just return X unchanged so the plumbing works.
-    Later this can:
-      1. train/fine-tune a network on labeled data
-      2. extract embeddings from a chosen layer
-      3. return those embeddings for all points
+    Train a fixed NN once on the initial labeled set and use the chosen hidden
+    layer embedding for all points.
     """
-    return np.asarray(X, dtype=float)
+    if labels is None or labeled_ind is None:
+        raise ValueError("NN representation requires labels and labeled_ind.")
+
+    if rep_cfg["nn_name"] == "cnn":
+        raise NotImplementedError("CNN is not implemented yet.")
+
+    layer = int(rep_cfg["nn_layer"])
+    if layer not in {1, 2, 3, 4}:
+        raise ValueError(f"nn_layer must be 1, 2, 3, or 4. Got {layer}.")
+
+    X = np.asarray(X, dtype=np.float32)
+    labeled_ind = np.asarray(labeled_ind, dtype=int)
+
+    model = train_mlp_embedding_model(X[labeled_ind], labels[labeled_ind], rep_cfg)
+    print(f"[NN] Finished training. Extracting hidden layer {rep_cfg['nn_layer']} embeddings.")
+    X_emb = extract_mlp_embeddings(model, X, layer)
+
+    return X_emb
 
 
 def apply_representation(

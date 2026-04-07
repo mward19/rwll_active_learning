@@ -5,7 +5,7 @@ import scipy.sparse as sparse
 from copy import deepcopy
 import acquisitions
 
-from utils_representations import get_features, get_base_features, get_representation_tag
+from utils_representations import apply_representation, get_base_features, get_representation_tag, representation_depends_on_seed
 
 # Trying basic pca before NN test
 from sklearn.decomposition import PCA
@@ -23,29 +23,9 @@ def get_models(G, model_names):
     return [deepcopy(MODELS[name]) for name in model_names]
 
 
-def load_graph(dataset, metric, numeigs=200, data_dir="data", returnX=False, returnK=False, knn=0, rep_cfg=None):
-    X, clusters = gl.datasets.load(dataset.split("-")[0], metric=metric)
-    print("X shape:", X.shape)
-
-    # Noise test to make sure outputs change
-    # rng = np.random.default_rng(0)
-    # X = X + 0.05 * rng.standard_normal(X.shape)
-    # print("MODIFIED X", X.shape, X.mean(), X.std())
-
-    # PCA test to make sure the output changes
-    # X = PCA(n_components=20).fit_transform(X)
-
-    # New simple method
-    # X, clusters = get_base_features(dataset, metric)
-
-    # New working method
-    if rep_cfg is None:
-        X, clusters = get_base_features(dataset, metric)
-    else:
-        X, clusters = get_features(dataset, metric, rep_cfg)    
-    print("X shape:", X.shape)
-    print(X.min(), X.max())
-
+def load_graph(dataset, metric, numeigs=200, data_dir="data", returnX=False, returnK=False, knn=0, rep_cfg=None, labeled_ind=None, seed=None):
+    # New data loading
+    X_base, clusters = get_base_features(dataset, metric)
 
     if dataset.split("-")[-1] == 'evenodd':
         labels = clusters % 2
@@ -54,6 +34,23 @@ def load_graph(dataset, metric, numeigs=200, data_dir="data", returnX=False, ret
         labels = clusters % modnum
     else:
         labels = clusters
+
+    # Apply the transformation
+    if rep_cfg is None:
+        X = np.asarray(X_base, dtype=float)
+        rep_tag = "regular"
+    else:
+        X = apply_representation(
+            X_base,
+            rep_cfg,
+            labels=labels,
+            labeled_ind=labeled_ind,
+        )
+        rep_tag = get_representation_tag(rep_cfg)
+        if representation_depends_on_seed(rep_cfg):
+            if seed is None:
+                raise ValueError("Seed-dependent representations require a seed.")
+            rep_tag = f"{rep_tag}_seed{seed}"
 
     if dataset.split("-")[0] == 'mstar': # allows for specific train/test set split TODO
         trainset = None
@@ -77,7 +74,6 @@ def load_graph(dataset, metric, numeigs=200, data_dir="data", returnX=False, ret
 
     #-----
     # New file pathing
-    rep_tag = "regular" if rep_cfg is None else get_representation_tag(rep_cfg)
     graph_filename = os.path.join(data_dir, f"{dataset.split('-')[0]}_{rep_tag}_{knn}")
     print(f"[GRAPH] rep tag = {rep_tag}")
     print(f"[GRAPH] knn = {knn}")
@@ -220,7 +216,7 @@ def get_active_learner(acq_func_name, model, labeled_ind, labeled_ind_labels, no
 
 
 
-def get_graph_and_models(acq_funcs_names, model_names, args, rep_cfg=None):
+def get_graph_and_models(acq_funcs_names, model_names, args, rep_cfg=None, labeled_ind=None, seed=None):
     # Determine if we need to calculate more eigenvectors/values for mc, vopt, mcvopt acquisitions
     maxnumeigs = 0
     for acq_func_name in acq_funcs_names:
@@ -238,7 +234,14 @@ def get_graph_and_models(acq_funcs_names, model_names, args, rep_cfg=None):
 
     # Load in the graph and labels
     print("Loading in Graph...")
-    G, labels, trainset, normalization, K = load_graph(args.dataset, args.metric, maxnumeigs, returnK=True, knn=args.knn, rep_cfg=rep_cfg)
+    G, labels, trainset, normalization, K = load_graph(args.dataset, 
+                                                       args.metric, 
+                                                       maxnumeigs, 
+                                                       returnK=True, 
+                                                       knn=args.knn, 
+                                                       rep_cfg=rep_cfg,
+                                                       labeled_ind=labeled_ind,
+                                                       seed=seed)
     
     models = get_models(G, model_names)
     
