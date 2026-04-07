@@ -1,3 +1,4 @@
+#utils_representations.py
 import graphlearning as gl
 import numpy as np
 from sklearn.decomposition import PCA
@@ -26,15 +27,13 @@ def get_representation_config(config: dict) -> dict:
         "noise_std": float(rep.get("noise_std", 0.05)),
         "pca_components": rep.get("pca_components", 20),
 
-        "nn_name": rep.get(nn_name, 'mlp'),
-        "nn_layer": rep.get("nn_layer", 4),
+        "nn_name": nn_name,
+        "nn_layer": int(rep.get("nn_layer", 4)),
         "nn_hidden_dim": int(rep.get("nn_hidden_dim", 128)),
         "nn_num_hidden_layers": int(rep.get("nn_num_hidden_layers", 4)),
         "nn_epochs": int(rep.get("nn_epochs", 20)),
         "nn_batch_size": int(rep.get("nn_batch_size", 64)),
         "nn_lr": float(rep.get("nn_lr", 1e-3)),
-        "nn_dropout": float(rep.get("nn_dropout", 0.0)),
-        "nn_weight_decay": float(rep.get("nn_weight_decay", 0.0)),
 
         "random_seed": int(rep.get("random_seed", 0)),
     }
@@ -53,18 +52,31 @@ def get_representation_tag(rep_cfg: dict) -> str:
 
     if rep_type == "noise":
         noise_std = rep_cfg["noise_std"]
-        return f"noise{str(noise_std).replace('.', 'p')}"
+        seed = rep_cfg.get("random_seed", 0)
+        return f"noise{str(noise_std).replace('.', 'p')}_s{seed}"
 
     if rep_type == "pca":
         ncomp = rep_cfg["pca_components"]
-        return f"pca{ncomp}"
+        seed = rep_cfg.get("random_seed", 0)
+        return f"pca{ncomp}_s{seed}"
 
     if rep_type == "nn":
-        nn_name = rep_cfg["nn_name"] or "mlp"
+        nn_name = rep_cfg["nn_name"]
         nn_layer = rep_cfg["nn_layer"]
         hidden_dim = rep_cfg["nn_hidden_dim"]
         num_hidden_layers = rep_cfg["nn_num_hidden_layers"]
-        return f"nn_{nn_name}_L{num_hidden_layers}_H{hidden_dim}_h{nn_layer}"
+        epochs = rep_cfg["nn_epochs"]
+        lr = str(rep_cfg["nn_lr"]).replace(".", "p")
+        seed = rep_cfg.get("random_seed", 0)
+        return (
+            f"nn_{nn_name}"
+            f"_L{num_hidden_layers}"
+            f"_H{hidden_dim}"
+            f"_h{nn_layer}"
+            f"_e{epochs}"
+            f"_lr{lr}"
+            f"_s{seed}"
+        )
 
     raise ValueError(f"Unknown representation type: {rep_type}")
 
@@ -77,7 +89,6 @@ class MLPEmbeddingNet(nn.Module):
         hidden_dim: int,
         num_classes: int,
         num_hidden_layers: int = 4,
-        dropout: float = 0.0,
     ):
         super().__init__()
 
@@ -85,7 +96,6 @@ class MLPEmbeddingNet(nn.Module):
             raise ValueError(f"num_hidden_layers must be >= 1, got {num_hidden_layers}")
 
         self.num_hidden_layers = num_hidden_layers
-        self.dropout = nn.Dropout(dropout)
 
         self.hidden_layers = nn.ModuleList()
         self.hidden_layers.append(nn.Linear(input_dim, hidden_dim))
@@ -104,7 +114,6 @@ class MLPEmbeddingNet(nn.Module):
         for i, linear in enumerate(self.hidden_layers, start=1):
             x = linear(x)
             x = self.relu(x)
-            x = self.dropout(x)
             if i == layer:
                 return x
 
@@ -114,7 +123,6 @@ class MLPEmbeddingNet(nn.Module):
         for linear in self.hidden_layers:
             x = linear(x)
             x = self.relu(x)
-            x = self.dropout(x)
         return self.classifier(x)
 
 def get_torch_device() -> torch.device:
@@ -143,15 +151,13 @@ def train_mlp_embedding_model(
     epochs = rep_cfg["nn_epochs"]
     batch_size = rep_cfg["nn_batch_size"]
     lr = rep_cfg["nn_lr"]
-    dropout = rep_cfg["nn_dropout"]
-    weight_decay = rep_cfg["nn_weight_decay"]
+
 
     model = MLPEmbeddingNet(
         input_dim=input_dim,
         hidden_dim=hidden_dim,
         num_classes=num_classes,
         num_hidden_layers=num_hidden_layers,
-        dropout=dropout,
     ).to(device)
 
     dataset = TensorDataset(
@@ -166,8 +172,7 @@ def train_mlp_embedding_model(
 
     optimizer = torch.optim.Adam(
         model.parameters(),
-        lr=lr,
-        weight_decay=weight_decay,
+        lr=lr
     )
     criterion = nn.CrossEntropyLoss()
 
@@ -177,8 +182,7 @@ def train_mlp_embedding_model(
         f"num_hidden_layers={num_hidden_layers}, num_classes={num_classes}"
     )
     print(
-        f"[NN] epochs={epochs}, batch_size={batch_size}, lr={lr}, "
-        f"dropout={dropout}, weight_decay={weight_decay}"
+        f"[NN] epochs={epochs}, batch_size={batch_size}, lr={lr}"
     )
 
     model.train()

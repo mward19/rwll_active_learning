@@ -4,27 +4,49 @@ from typing import Iterable
 
 import matplotlib.pyplot as plt
 import pandas as pd
+import yaml
+
+from utils_representations import get_representation_config, get_representation_tag
 
 
-def _summary_path(resultsdir: str, dataset: str, iters: int, modelname: str) -> Path:
-    """Return the expected summary CSV path for a dataset/model."""
-    return Path(resultsdir) / f"{dataset}_overall_{iters}" / f"{modelname}_stats.csv"
+def _get_rep_info(config_path: str):
+    with open(config_path, "r") as f:
+        config = yaml.safe_load(f)
+    rep_cfg = get_representation_config(config)
+    rep_tag = get_representation_tag(rep_cfg)
+    rate = config.get("initial_labels_per_class", 1)
+    return rep_cfg, rep_tag, rate
 
 
-def _load_summary(resultsdir: str, dataset: str, iters: int, modelname: str) -> pd.DataFrame:
-    """Load the summary CSV for a dataset/model."""
-    path = _summary_path(resultsdir, dataset, iters, modelname)
+def _summary_path(
+    resultsdir: str,
+    dataset: str,
+    iters: int,
+    modelname: str,
+    config_path: str = "./config.yaml",
+) -> Path:
+    _, rep_tag, rate = _get_rep_info(config_path)
+    return Path(resultsdir) / f"{dataset}_{rep_tag}_r{rate}_overall_{iters}" / f"{modelname}_stats.csv"
+
+
+def _load_summary(
+    resultsdir: str,
+    dataset: str,
+    iters: int,
+    modelname: str,
+    config_path: str = "./config.yaml",
+) -> pd.DataFrame:
+    path = _summary_path(resultsdir, dataset, iters, modelname, config_path=config_path)
     if not path.exists():
         raise FileNotFoundError(f"Could not find summary file:\n{path}")
     return pd.read_csv(path)
 
 
 def _get_method_names(df: pd.DataFrame) -> list[str]:
-    """Extract method names from columns ending in ' : avg'."""
     methods = []
     for col in df.columns:
         if col.endswith(" : avg"):
-            methods.append(col[:-6])  # strip " : avg"
+            methods.append(col[:-6])
     return methods
 
 
@@ -33,32 +55,13 @@ def plot_summary(
     iters: int,
     modelname: str,
     resultsdir: str = "results",
+    config_path: str = "./config.yaml",
     methods: Iterable[str] | None = None,
     show_std: bool = True,
     title: str | None = None,
 ) -> None:
-    """
-    Plot average accuracy curves from a summary CSV.
-
-    Parameters
-    ----------
-    dataset : str
-        Dataset name, e.g. 'mnistimb-mod3'
-    iters : int
-        Number of AL iterations used in the run, e.g. 3
-    modelname : str
-        Accuracy model summary to plot, e.g. 'rwll' or 'rwll0010'
-    resultsdir : str
-        Root results directory
-    methods : iterable of str or None
-        Exact method names to include, e.g. ['unc : rwll', 'random : rwll0010'].
-        If None, plot all methods found.
-    show_std : bool
-        Whether to shade ±1 std when available.
-    title : str or None
-        Custom title. If None, generate one.
-    """
-    df = _load_summary(resultsdir, dataset, iters, modelname)
+    df = _load_summary(resultsdir, dataset, iters, modelname, config_path=config_path)
+    _, rep_tag, rate = _get_rep_info(config_path)
     all_methods = _get_method_names(df)
 
     if methods is None:
@@ -87,15 +90,20 @@ def plot_summary(
     plt.xlabel("Active Learning Step")
     plt.ylabel("Accuracy (%)")
     plt.xticks(x)
-    plt.title(title or f"{dataset} — {modelname}")
+    plt.title(title or f"{dataset} — {modelname} — {rep_tag} — r={rate}")
     plt.legend()
     plt.tight_layout()
     plt.show()
 
 
-def list_methods(dataset: str, iters: int, modelname: str, resultsdir: str = "results") -> list[str]:
-    """Print and return the method names available in a summary CSV."""
-    df = _load_summary(resultsdir, dataset, iters, modelname)
+def list_methods(
+    dataset: str,
+    iters: int,
+    modelname: str,
+    resultsdir: str = "results",
+    config_path: str = "./config.yaml",
+) -> list[str]:
+    df = _load_summary(resultsdir, dataset, iters, modelname, config_path=config_path)
     methods = _get_method_names(df)
     print("\n".join(methods))
     return methods

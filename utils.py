@@ -1,3 +1,4 @@
+#utils.py
 import graphlearning as gl
 import os
 import numpy as np
@@ -74,7 +75,7 @@ def load_graph(dataset, metric, numeigs=200, data_dir="data", returnX=False, ret
 
     #-----
     # New file pathing
-    graph_filename = os.path.join(data_dir, f"{dataset.split('-')[0]}_{rep_tag}_{knn}")
+    graph_filename = os.path.join(data_dir, f"{dataset.split('-')[0]}_{metric}_{rep_tag}_{knn}")
     print(f"[GRAPH] rep tag = {rep_tag}")
     print(f"[GRAPH] knn = {knn}")
     print(f"[GRAPH] X shape = {X.shape}")
@@ -129,23 +130,20 @@ def load_graph(dataset, metric, numeigs=200, data_dir="data", returnX=False, ret
 
 
 def get_eig_data(G, normalization, numeigs):
-    # determine if need to recompute eigenvalues/vectors
-    recompute = True
-    if G.eigendata[normalization]['eigenvalues'] is not None:
-        if G.eigendata[normalization]['eigenvalues'].size < numeigs:
-            recompute = True
+    """
+    Retrieve stored eigendata if enough is already cached on the graph;
+    otherwise compute it.
+    """
+    eigvals = G.eigendata[normalization]['eigenvalues']
+    eigvecs = G.eigendata[normalization]['eigenvectors']
+
+    if eigvals is not None and eigvecs is not None and eigvals.size >= numeigs:
+        print(f"Using previously stored {normalization} eigendata with {numeigs} evals")
+        evals = eigvals[:numeigs]
+        evecs = eigvecs[:, :numeigs]
     else:
-        recompute = True
-        
-    if not recompute:
-        # Current gl.active_learning is implemented only to allow for exact eigendata compute for "normalized"
-        print(f"Using previously stored {normalization} eigendata with {numeigs} evals for {acq_func_name}")
-        evals = G.eigendata[normalization]['eigenvalues'][:numeigs]
-        evecs = G.eigendata[normalization]['eigenvectors'][:,:numeigs] 
-        
-    else:
-        print("Warning: Computing eigendata with gl.active_learning defaults...")
-        evals, evecs = G.eigen_decomp(normalization, k=numeigs)
+        print(f"Computing {numeigs} {normalization} eigenpairs...")
+        evals, evecs = G.eigen_decomp(normalization=normalization, k=numeigs)
 
     return evals, evecs
 
@@ -208,7 +206,21 @@ def get_active_learner(acq_func_name, model, labeled_ind, labeled_ind_labels, no
 
     else:
         acq_func, unc_method = get_unc_acq_func(af_name)
-        AL = gl.active_learning.active_learner(model, acq_func, labeled_ind.copy(), labeled_ind_labels.copy())
+        if unc_method is None:
+            AL = gl.active_learning.active_learner(
+                model,
+                acq_func,
+                labeled_ind.copy(),
+                labeled_ind_labels.copy(),
+            )
+        else:
+            AL = gl.active_learning.active_learner(
+                model,
+                acq_func,
+                labeled_ind.copy(),
+                labeled_ind_labels.copy(),
+                unc_method=unc_method,
+            )
     
     return AL
 
