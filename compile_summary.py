@@ -5,27 +5,38 @@ import os
 import numpy as np
 from glob import glob
 from functools import reduce
+import yaml
+from utils_representations import get_representation_config, get_representation_tag
 
 if __name__ == "__main__":
     parser = ArgumentParser(description="Compile Summary Stats of Active Learning Tests")
     parser.add_argument("--dataset", type=str, default='mnist-mod3')
     parser.add_argument("--iters", type=int, default=100)
     parser.add_argument("--resultsdir", type=str, default="results")
+    parser.add_argument("--config", type=str, default="./config.yaml")
     args = parser.parse_args()
     
+    #-----
+    # New representation tagging
+    with open(args.config, "r") as f:
+        config = yaml.safe_load(f)
+    rep_cfg = get_representation_config(config)
+    rep_tag = get_representation_tag(rep_cfg)
+    print("Using representation:", rep_tag)
+    #-----
 
 
     # Get average and std curves over all tests
-    overall_results_dir = os.path.join(args.resultsdir, f"{args.dataset}_overall_{args.iters}")
+    overall_results_dir = os.path.join(args.resultsdir, f"{args.dataset}_{rep_tag}_overall_{args.iters}") # Changed
     if not os.path.exists(overall_results_dir):
         os.makedirs(overall_results_dir)
 
-    results_models_directories = glob(os.path.join(args.resultsdir, f"{args.dataset}_results_*_{args.iters}", "*/"))
+    results_models_directories = glob(os.path.join(args.resultsdir, f"{args.dataset}_{rep_tag}_results_*_{args.iters}", "*/")) # Changed
     # acc_model_names_list = np.unique([fpath.split("/")[-2] for fpath in results_models_directories]) # This was designed for mac
     acc_model_names_list = np.unique([os.path.basename(os.path.dirname(fpath)) for fpath in results_models_directories]) # This works on windows (and should generally i think)
     for acc_model_name in tqdm(acc_model_names_list, desc=f"Saving results over all runs to: {overall_results_dir}", total=len(acc_model_names_list)):
         overall_results_file = os.path.join(overall_results_dir, f"{acc_model_name}_stats.csv")
-        acc_files = glob(os.path.join(args.resultsdir, f"{args.dataset}_results_*_{args.iters}", f"{acc_model_name}", "accs.csv"))
+        acc_files = glob(os.path.join(args.resultsdir, f"{args.dataset}_{rep_tag}_results_*_{args.iters}", acc_model_name, "accs.csv")) # Changed
         dfs = []
         err_string = ""
         for f in sorted(acc_files):
@@ -53,7 +64,7 @@ if __name__ == "__main__":
         
         # Do metrics summary
         overall_results_file = os.path.join(overall_results_dir, f"{acc_model_name}_stats_metrics.csv")
-        metric_files = glob(os.path.join(args.resultsdir, f"{args.dataset}_results_*_{args.iters}", f"{acc_model_name}", "metrics.csv"))
+        metric_files = glob(os.path.join(args.resultsdir, f"{args.dataset}_{rep_tag}_results_*_{args.iters}", acc_model_name, "metrics.csv")) # Changed
         dfs = []
         err_string = ""
         for f in sorted(metric_files):
@@ -79,17 +90,17 @@ if __name__ == "__main__":
     
 
     # Get average and std curves over all tests
-    overall_results_dir = os.path.join(args.resultsdir, f"{args.dataset}_overall_{args.iters}")
+    overall_results_dir = os.path.join(args.resultsdir, f"{args.dataset}_{rep_tag}_overall_{args.iters}") # Changed
     if not os.path.exists(overall_results_dir):
         os.makedirs(overall_results_dir)
 
-    results_models_directories = glob(os.path.join(args.resultsdir, f"{args.dataset}_results_*_{args.iters}", "*/"))
+    results_models_directories = glob(os.path.join(args.resultsdir, f"{args.dataset}_{rep_tag}_results_*_{args.iters}", "*/")) # Changed
     # acc_model_names_list = np.unique([fpath.split("/")[-2] for fpath in results_models_directories]) # This was designed for mac
     acc_model_names_list = np.unique([os.path.basename(os.path.dirname(fpath)) for fpath in results_models_directories]) # This works on windows (and should generally i think)
 
     for acc_model_name in tqdm(acc_model_names_list, desc=f"Saving results over all runs to: {overall_results_dir}", total=len(acc_model_names_list)):
         overall_results_file = os.path.join(overall_results_dir, f"{acc_model_name}_stats_metrics.csv")
-        metric_files = glob(os.path.join(args.resultsdir, f"{args.dataset}_results_*_{args.iters}", f"{acc_model_name}", "metrics.csv"))
+        metric_files = glob(os.path.join(args.resultsdir, f"{args.dataset}_{rep_tag}_results_*_{args.iters}", acc_model_name, "metrics.csv"))
         dfs = [pd.read_csv(f) for f in sorted(metric_files)]
         if len(dfs) == 0:
             continue
