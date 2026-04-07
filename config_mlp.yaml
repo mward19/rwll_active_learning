@@ -7,7 +7,7 @@ acqs_models:
 acc_models:
   - "rwll"
 
-seeds: [2, 3, 5, 6, 15]
+seeds: [2, 3, 5]
 
 representation:
   type: nn
