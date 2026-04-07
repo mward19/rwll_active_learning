@@ -5,6 +5,9 @@ import scipy.sparse as sparse
 from copy import deepcopy
 import acquisitions
 
+# Trying basic pca before NN test
+from sklearn.decomposition import PCA
+
 
 def get_models(G, model_names):
     MODELS = {'poisson':gl.ssl.poisson(G),  # poisson learning
@@ -20,6 +23,15 @@ def get_models(G, model_names):
 
 def load_graph(dataset, metric, numeigs=200, data_dir="data", returnX=False, returnK=False, knn=0):
     X, clusters = gl.datasets.load(dataset.split("-")[0], metric=metric)
+
+    # Noise test to make sure outputs change
+    # rng = np.random.default_rng(0)
+    # X = X + 0.05 * rng.standard_normal(X.shape)
+    # print("MODIFIED X", X.shape, X.mean(), X.std())
+
+    # PCA test to make sure the output changes
+    # X = PCA(n_components=20).fit_transform(X)
+
     if dataset.split("-")[-1] == 'evenodd':
         labels = clusters % 2
     elif dataset.split("-")[-1][:3] == "mod":
