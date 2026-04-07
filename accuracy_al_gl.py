@@ -1,3 +1,4 @@
+#accuracy_al_gl.py
 import numpy as np
 import matplotlib.pyplot as plt
 import graphlearning as gl
@@ -71,7 +72,7 @@ if __name__ == "__main__":
             if " ".join(fname.split("_")[-2:]).split(".")[0] in acqs_models
         ]
         labeled_ind = np.load(os.path.join(RESULTS_DIR, "init_labeled.npy"))
-
+        
         # For seed-dependent reps (nn), rebuild/load the graph for this seed's
         # initial labeled set. For seed-independent reps, reuse the global graph.
         if representation_depends_on_seed(rep_cfg):
@@ -104,7 +105,8 @@ if __name__ == "__main__":
 
             def compute_accuracies(choices_fname):
                 # get acquisition function - gbssl modelname that made this sequence of choices
-                acq_func_name, modelname = choices_fname.split("_")[-2:]
+                base = os.path.basename(choices_fname)
+                acq_func_name, modelname = base[len("choices_"):].rsplit("_", 1)
                 modelname = modelname.split(".")[0]
 
                 # load in the indices of the choices
@@ -149,7 +151,8 @@ if __name__ == "__main__":
             max_length = 0
             for fname in accs_fnames:
                 acc = np.load(fname)
-                acq_func_name, modelname = fname.split("_")[-2:]
+                base = os.path.basename(fname)
+                acq_func_name, modelname = base[len("acc_"):].rsplit("_", 1)
                 modelname = modelname.split(".")[0]
                 columns[acq_func_name + " : " + modelname] = acc
                 if acc.size > max_length:

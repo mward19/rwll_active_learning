@@ -1,3 +1,4 @@
+#test_al_gl.py
 import numpy as np
 import matplotlib.pyplot as plt
 import graphlearning as gl
@@ -137,7 +138,7 @@ if __name__ == "__main__":
                 return
             
             # if need to decay tau, calculate mu from epsilon and 2K. K = # of clusters.
-            if "decaytau" in acq_func_name in acq_func_name:
+            if "decaytau" in acq_func_name:
                 eps = 1e-9
                 mu = (eps / model.tau)**(.5 / K_current)
             

@@ -1,3 +1,4 @@
+#compile_summary.py
 import pandas as pd
 from tqdm import tqdm
 from argparse import ArgumentParser
@@ -43,7 +44,8 @@ if __name__ == "__main__":
             try:
                 dfs.append(pd.read_csv(f))
             except:
-                err_string += f.split("/")[1].split("_")[-2] + ", "
+                run_name = os.path.basename(os.path.dirname(os.path.dirname(f)))
+                err_string += run_name.split("_results_")[-1].split("_")[0] + ", "
         
         if len(dfs) == 0:
             continue
