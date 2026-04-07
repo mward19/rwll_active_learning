@@ -23,7 +23,7 @@ def get_models(G, model_names):
     return [deepcopy(MODELS[name]) for name in model_names]
 
 
-def load_graph(dataset, metric, numeigs=200, data_dir="data", returnX=False, returnK=False, knn=0, rep_cfg=None, labeled_ind=None, seed=None):
+def load_graph(dataset, metric, numeigs=200, data_dir="data", returnX=False, returnK=False, knn=0, rep_cfg=None, labeled_ind=None, seed=None, rate=1):
     # New data loading
     X_base, clusters = get_base_features(dataset, metric)
 
@@ -50,7 +50,7 @@ def load_graph(dataset, metric, numeigs=200, data_dir="data", returnX=False, ret
         if representation_depends_on_seed(rep_cfg):
             if seed is None:
                 raise ValueError("Seed-dependent representations require a seed.")
-            rep_tag = f"{rep_tag}_seed{seed}"
+            rep_tag = f"{rep_tag}_seed{seed}_r{rate}"
 
     if dataset.split("-")[0] == 'mstar': # allows for specific train/test set split TODO
         trainset = None
@@ -216,7 +216,7 @@ def get_active_learner(acq_func_name, model, labeled_ind, labeled_ind_labels, no
 
 
 
-def get_graph_and_models(acq_funcs_names, model_names, args, rep_cfg=None, labeled_ind=None, seed=None):
+def get_graph_and_models(acq_funcs_names, model_names, args, rep_cfg=None, labeled_ind=None, seed=None, rate=1):
     # Determine if we need to calculate more eigenvectors/values for mc, vopt, mcvopt acquisitions
     maxnumeigs = 0
     for acq_func_name in acq_funcs_names:
@@ -241,7 +241,8 @@ def get_graph_and_models(acq_funcs_names, model_names, args, rep_cfg=None, label
                                                        knn=args.knn, 
                                                        rep_cfg=rep_cfg,
                                                        labeled_ind=labeled_ind,
-                                                       seed=seed)
+                                                       seed=seed, 
+                                                       rate=rate)
     
     models = get_models(G, model_names)
     

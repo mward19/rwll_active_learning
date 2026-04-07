@@ -17,13 +17,25 @@ def get_representation_config(config: dict) -> dict:
     if rep_type not in {"regular", "noise", "pca", "nn"}:
         raise ValueError(f"Unknown representation type: {rep_type}")
 
+    nn_name = rep.get("nn_name", "mlp")
+    if nn_name not in {"mlp", "cnn"}:
+        raise ValueError(f"Unknown nn_name: {nn_name}")
+
     return {
         "type": rep_type,
         "noise_std": float(rep.get("noise_std", 0.05)),
         "pca_components": rep.get("pca_components", 20),
-        "nn_name": rep.get("nn_name", None),
-        "nn_layer": rep.get("nn_layer", None),
-        "nn_update_interval": rep.get("nn_update_interval", None),
+
+        "nn_name": rep.get(nn_name, 'mlp'),
+        "nn_layer": rep.get("nn_layer", 4),
+        "nn_hidden_dim": int(rep.get("nn_hidden_dim", 128)),
+        "nn_num_hidden_layers": int(rep.get("nn_num_hidden_layers", 4)),
+        "nn_epochs": int(rep.get("nn_epochs", 20)),
+        "nn_batch_size": int(rep.get("nn_batch_size", 64)),
+        "nn_lr": float(rep.get("nn_lr", 1e-3)),
+        "nn_dropout": float(rep.get("nn_dropout", 0.0)),
+        "nn_weight_decay": float(rep.get("nn_weight_decay", 0.0)),
+
         "random_seed": int(rep.get("random_seed", 0)),
     }
 
@@ -50,46 +62,59 @@ def get_representation_tag(rep_cfg: dict) -> str:
     if rep_type == "nn":
         nn_name = rep_cfg["nn_name"] or "mlp"
         nn_layer = rep_cfg["nn_layer"]
-        return f"nn_{nn_name}_h{nn_layer}"
+        hidden_dim = rep_cfg["nn_hidden_dim"]
+        num_hidden_layers = rep_cfg["nn_num_hidden_layers"]
+        return f"nn_{nn_name}_L{num_hidden_layers}_H{hidden_dim}_h{nn_layer}"
 
     raise ValueError(f"Unknown representation type: {rep_type}")
 
 
 # NN model helpers
 class MLPEmbeddingNet(nn.Module):
-    def __init__(self, input_dim: int, hidden_dim: int, num_classes: int):
+    def __init__(
+        self,
+        input_dim: int,
+        hidden_dim: int,
+        num_classes: int,
+        num_hidden_layers: int = 4,
+        dropout: float = 0.0,
+    ):
         super().__init__()
-        self.fc1 = nn.Linear(input_dim, hidden_dim)
-        self.fc2 = nn.Linear(hidden_dim, hidden_dim)
-        self.fc3 = nn.Linear(hidden_dim, hidden_dim)
-        self.fc4 = nn.Linear(hidden_dim, hidden_dim)
+
+        if num_hidden_layers < 1:
+            raise ValueError(f"num_hidden_layers must be >= 1, got {num_hidden_layers}")
+
+        self.num_hidden_layers = num_hidden_layers
+        self.dropout = nn.Dropout(dropout)
+
+        self.hidden_layers = nn.ModuleList()
+        self.hidden_layers.append(nn.Linear(input_dim, hidden_dim))
+        for _ in range(num_hidden_layers - 1):
+            self.hidden_layers.append(nn.Linear(hidden_dim, hidden_dim))
+
         self.relu = nn.ReLU()
         self.classifier = nn.Linear(hidden_dim, num_classes)
 
     def get_embedding(self, x: torch.Tensor, layer: int) -> torch.Tensor:
-        x = self.relu(self.fc1(x))
-        if layer == 1:
-            return x
+        if layer < 1 or layer > self.num_hidden_layers:
+            raise ValueError(
+                f"nn_layer must be between 1 and {self.num_hidden_layers}. Got {layer}."
+            )
 
-        x = self.relu(self.fc2(x))
-        if layer == 2:
-            return x
+        for i, linear in enumerate(self.hidden_layers, start=1):
+            x = linear(x)
+            x = self.relu(x)
+            x = self.dropout(x)
+            if i == layer:
+                return x
 
-        x = self.relu(self.fc3(x))
-        if layer == 3:
-            return x
-
-        x = self.relu(self.fc4(x))
-        if layer == 4:
-            return x
-
-        raise ValueError(f"nn_layer must be 1, 2, 3, or 4. Got {layer}.")
+        raise RuntimeError("Failed to extract embedding layer.")
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        x = self.relu(self.fc1(x))
-        x = self.relu(self.fc2(x))
-        x = self.relu(self.fc3(x))
-        x = self.relu(self.fc4(x))
+        for linear in self.hidden_layers:
+            x = linear(x)
+            x = self.relu(x)
+            x = self.dropout(x)
         return self.classifier(x)
 
 def get_torch_device() -> torch.device:
@@ -113,26 +138,54 @@ def train_mlp_embedding_model(
 
     input_dim = X_labeled.shape[1]
     num_classes = len(np.unique(y_labeled))
-    hidden_dim = 128
-    epochs = 20
-    batch_size = 64
-    lr = 1e-3
+    hidden_dim = rep_cfg["nn_hidden_dim"]
+    num_hidden_layers = rep_cfg["nn_num_hidden_layers"]
+    epochs = rep_cfg["nn_epochs"]
+    batch_size = rep_cfg["nn_batch_size"]
+    lr = rep_cfg["nn_lr"]
+    dropout = rep_cfg["nn_dropout"]
+    weight_decay = rep_cfg["nn_weight_decay"]
 
-    model = MLPEmbeddingNet(input_dim, hidden_dim, num_classes).to(device)
+    model = MLPEmbeddingNet(
+        input_dim=input_dim,
+        hidden_dim=hidden_dim,
+        num_classes=num_classes,
+        num_hidden_layers=num_hidden_layers,
+        dropout=dropout,
+    ).to(device)
 
     dataset = TensorDataset(
         torch.from_numpy(X_labeled),
         torch.from_numpy(y_labeled),
     )
-    loader = DataLoader(dataset, batch_size=min(batch_size, len(dataset)), shuffle=True)
+    loader = DataLoader(
+        dataset,
+        batch_size=min(batch_size, len(dataset)),
+        shuffle=True,
+    )
 
-    optimizer = torch.optim.Adam(model.parameters(), lr=lr)
+    optimizer = torch.optim.Adam(
+        model.parameters(),
+        lr=lr,
+        weight_decay=weight_decay,
+    )
     criterion = nn.CrossEntropyLoss()
 
     print(f"[NN] Training {rep_cfg['nn_name']} on {len(X_labeled)} labeled points")
-    print(f"[NN] Input dim = {X_labeled.shape[1]}, output classes = {len(np.unique(y_labeled))}")
+    print(
+        f"[NN] device={device}, input_dim={input_dim}, hidden_dim={hidden_dim}, "
+        f"num_hidden_layers={num_hidden_layers}, num_classes={num_classes}"
+    )
+    print(
+        f"[NN] epochs={epochs}, batch_size={batch_size}, lr={lr}, "
+        f"dropout={dropout}, weight_decay={weight_decay}"
+    )
+
     model.train()
-    for _ in range(epochs):
+    for epoch in range(epochs):
+        epoch_loss = 0.0
+        total = 0
+
         for xb, yb in loader:
             xb = xb.to(device)
             yb = yb.to(device)
@@ -142,6 +195,14 @@ def train_mlp_embedding_model(
             loss = criterion(logits, yb)
             loss.backward()
             optimizer.step()
+
+            batch_size_actual = xb.shape[0]
+            epoch_loss += loss.item() * batch_size_actual
+            total += batch_size_actual
+
+        if epoch % 5 == 0:
+            avg_loss = epoch_loss / max(total, 1)
+            print(f"[NN] epoch {epoch + 1:02d}/{epochs} loss={avg_loss:.4f}")
 
     return model
 
@@ -215,15 +276,22 @@ def get_nn_features(X: np.ndarray, rep_cfg: dict, labels=None, labeled_ind=None)
     if rep_cfg["nn_name"] == "cnn":
         raise NotImplementedError("CNN is not implemented yet.")
 
+    if rep_cfg["nn_name"] != "mlp":
+        raise ValueError(f"Unknown nn_name: {rep_cfg['nn_name']}")
+
     layer = int(rep_cfg["nn_layer"])
-    if layer not in {1, 2, 3, 4}:
-        raise ValueError(f"nn_layer must be 1, 2, 3, or 4. Got {layer}.")
+    num_hidden_layers = int(rep_cfg["nn_num_hidden_layers"])
+
+    if layer < 1 or layer > num_hidden_layers:
+        raise ValueError(
+            f"nn_layer must be between 1 and nn_num_hidden_layers={num_hidden_layers}. Got {layer}."
+        )
 
     X = np.asarray(X, dtype=np.float32)
     labeled_ind = np.asarray(labeled_ind, dtype=int)
 
     model = train_mlp_embedding_model(X[labeled_ind], labels[labeled_ind], rep_cfg)
-    print(f"[NN] Finished training. Extracting hidden layer {rep_cfg['nn_layer']} embeddings.")
+    print(f"[NN] Finished training. Extracting hidden layer {layer} embeddings.")
     X_emb = extract_mlp_embeddings(model, X, layer)
 
     return X_emb

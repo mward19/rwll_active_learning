@@ -1,0 +1,35 @@
+acqs_models:
+  - "unc rwll"
+  - "uncnorm rwll0010"
+  - "uncnormdecaytau rwll0010"
+  - "uncnormprop++decaytau rwll0010"
+  - "uncnormprop++ rwll0010"
+  - "uncnormdecaytaukde rwll0010"
+  - "vopt rwll0010"
+  - "mcvopt rwll"
+  - "random rwll0010"
+
+acc_models:
+  - "rwll"
+  - "rwll0010"
+
+# seeds: [2, 3, 5, 6, 15, 16, 29, 30, 49, 50]
+seeds: [2, 3]
+
+
+representation:
+  type: nn
+  random_seed: 0
+
+  nn_name: mlp
+  nn_layer: 3
+
+  nn_hidden_dim: 128
+  nn_num_hidden_layers: 5
+  nn_epochs: 17
+  nn_batch_size: 64
+  nn_lr: 0.001
+  nn_dropout: 0.0
+  nn_weight_decay: 0.0
+
+initial_labels_per_class: 9
