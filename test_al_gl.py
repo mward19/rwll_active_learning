@@ -14,6 +14,8 @@ from scipy.special import softmax
 from functools import reduce
 from utils import *
 
+from utils_representations import get_representation_config, get_representation_tag
+
 
 from joblib import Parallel, delayed
 
@@ -35,6 +37,14 @@ if __name__ == "__main__":
     with open(args.config, 'r') as f:
         config = yaml.safe_load(f)
 
+    
+    #-----
+    # Get the representation tag for the get_features function
+    rep_cfg = get_representation_config(config)
+    rep_tag = get_representation_tag(rep_cfg)
+    print("Using representation:", rep_tag)
+    #-----
+
 
     # Define ssl models and acquisition functions from configuration file 
     ACQS_MODELS = [name for name in config["acqs_models"] if name.split(" ")[-1][:4] != "LAND"]
@@ -43,7 +53,7 @@ if __name__ == "__main__":
 
     # load in graph and models that will be used in this run of tests
     model_names = [name.split(" ")[1] for name in ACQS_MODELS]
-    models, labels, trainset, normalization, K = get_graph_and_models(acq_funcs_names, model_names, args)
+    models, labels, trainset, normalization, K = get_graph_and_models(acq_funcs_names, model_names, args, rep_cfg) # Changed
     
     
     # if manually pass in K value in command line then overwrite value of K
@@ -62,13 +72,14 @@ if __name__ == "__main__":
         seeds = [0]
         print(f"Did not find 'seeds' in config file, defaulting to : {seeds}")
 
+
     # Iterations for the different tests
     for it, seed in enumerate(seeds):
         # get initially labeled indices, based on the given seed
         labeled_ind = gl.trainsets.generate(labels, rate=1, seed=seed)
 
         # define the results directory for this seed's test
-        RESULTS_DIR = os.path.join(args.resultsdir, f"{args.dataset}_results_{seed}_{args.iters}")
+        RESULTS_DIR = os.path.join(args.resultsdir, f"{args.dataset}_{rep_tag}_results_{seed}_{args.iters}") # Changed
         if not os.path.exists(RESULTS_DIR):
             os.makedirs(RESULTS_DIR)
         np.save(os.path.join(RESULTS_DIR, "init_labeled.npy"), labeled_ind) # save initially labeled points that are common to each test
