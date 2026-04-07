@@ -13,6 +13,7 @@ from glob import glob
 from scipy.special import softmax
 from functools import reduce
 from utils import *
+from utils_representations import get_representation_config, get_representation_tag
 
 from joblib import Parallel, delayed
 
@@ -33,11 +34,18 @@ if __name__ == "__main__":
     with open(args.config, 'r') as f:
         config = yaml.safe_load(f)
 
-    G, labels, trainset, normalization = load_graph(args.dataset, args.metric, numeigs=None, knn=args.knn) # don't compute any eigenvalues
+    #-----
+    # New representation tagging
+    rep_cfg = get_representation_config(config)
+    rep_tag = get_representation_tag(rep_cfg)
+    print("Using representation:", rep_tag)
+    #-----
+
+    G, labels, trainset, normalization = load_graph(args.dataset, args.metric, numeigs=None, knn=args.knn, rep_cfg=rep_cfg) # don't compute any eigenvalues  # Changed
     model_names = [name for name in config["acc_models"] if name[:3] != "gcn"]
     models = get_models(G, model_names)
     models_dict = {name:model for name, model in zip(model_names, models)}
-    results_directories = glob(os.path.join(args.resultsdir, f"{args.dataset}_results_*_{args.iters}/"))
+    results_directories = glob(os.path.join(args.resultsdir, f"{args.dataset}_{rep_tag}_results_*_{args.iters}/")) # Changed
     acqs_models = config["acqs_models"]
     
     
