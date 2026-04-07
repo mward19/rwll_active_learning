@@ -65,6 +65,6 @@ python compile_summary.py --dataset mnistimb-mod3 --resultsdir results
 
 
 # Trevor smoke screen test - can easily edit dataset-modifer, config file, results dir is autocreated/appended, iters
-python compile_summary.py --dataset mnistimb --config config_pca.yaml --resultsdir results --iters 3
-python accuracy_al_gl.py --dataset mnistimb --config config_pca.yaml --resultsdir results --iters 3 
-python compile_summary.py --dataset mnistimb --config config_pca.yaml --resultsdir results --iters 3  
+python test_al_gl.py --dataset mnistimb-mod3 --config config_mlp.yaml --resultsdir results --iters 3
+python accuracy_al_gl.py --dataset mnistimb-mod3 --config config_mlp.yaml --resultsdir results --iters 3 
+python compile_summary.py --dataset mnistimb-mod3 --config config_mlp.yaml --resultsdir results --iters 3  
