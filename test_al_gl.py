@@ -112,13 +112,14 @@ if __name__ == "__main__":
                 rep_cfg=rep_cfg,
                 labeled_ind=labeled_ind,
                 seed=seed,
+                rate=rate
             )
 
         # if manually pass in K value in command line then overwrite value of K
         K_current = args.K if args.K != 0 else K
 
         # define the results directory for this seed's test
-        RESULTS_DIR = os.path.join(args.resultsdir, f"{args.dataset}_{rep_tag}_results_{seed}_{args.iters}")
+        RESULTS_DIR = os.path.join(args.resultsdir,f"{args.dataset}_{rep_tag}_r{rate}_results_{seed}_{args.iters}")
         if not os.path.exists(RESULTS_DIR):
             os.makedirs(RESULTS_DIR)
         np.save(os.path.join(RESULTS_DIR, "init_labeled.npy"), labeled_ind) # save initially labeled points that are common to each test

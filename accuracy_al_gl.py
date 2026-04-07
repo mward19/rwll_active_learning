@@ -41,11 +41,10 @@ if __name__ == "__main__":
     rep_cfg = get_representation_config(config)
     rep_tag = get_representation_tag(rep_cfg)
     print("Using representation:", rep_tag)
+    rate = config.get("initial_labels_per_class", 1)
 
     model_names = [name for name in config["acc_models"] if name[:3] != "gcn"]
-    results_directories = glob(
-        os.path.join(args.resultsdir, f"{args.dataset}_{rep_tag}_results_*_{args.iters}/")
-    )
+    results_directories = glob(os.path.join(args.resultsdir, f"{args.dataset}_{rep_tag}_r{rate}_results_*_{args.iters}/"))
     acqs_models = config["acqs_models"]
 
     # For seed-independent reps, build the graph/models once.
@@ -90,6 +89,7 @@ if __name__ == "__main__":
                 rep_cfg=rep_cfg,
                 labeled_ind=labeled_ind,
                 seed=seed,
+                rate=rate
             )
             models = get_models(G, model_names)
             models_dict = {name: model for name, model in zip(model_names, models)}
