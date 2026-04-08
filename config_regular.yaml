@@ -19,9 +19,5 @@ seeds: [2, 3]
 
 representation:
   type: regular   # regular, noise, pca, nn
-  noise_std: 0.05
-  pca_components: 20
-  nn_name: null
-  nn_layer: null
-  nn_update_interval: null
 
+initial_labels_per_class: 1
