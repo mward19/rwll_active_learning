@@ -6,6 +6,7 @@ from sklearn.decomposition import PCA
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, TensorDataset
+import os
 
 
 def get_representation_config(config: dict) -> dict:
@@ -126,7 +127,12 @@ class MLPEmbeddingNet(nn.Module):
         return self.classifier(x)
 
 def get_torch_device() -> torch.device:
-    return torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device = None
+    if torch.cuda.is_available() and os.environ.get("CUDA_VISIBLE_DEVICES", "") != "":
+        device = torch.device("cuda")
+    else:
+        device = torch.device("cpu")
+    return device
 
 def train_mlp_embedding_model(
     X_labeled: np.ndarray,
