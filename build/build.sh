@@ -11,10 +11,11 @@ mamba env create -f environment.yml
 # OR update an existing env
 # mamba env update -n rwll_env -f environment.yml --prune
 
+eval "$(mamba shell hook --shell bash)"
 mamba activate rwll_env
 
-# install the torch stack from the official CUDA 12.8 wheel index
-python -m pip install --index-url https://download.pytorch.org/whl/cu128 \
+# install the torch stack from the official CUDA 12.6 wheel index for the P100s
+python -m pip install --index-url https://download.pytorch.org/whl/cu126 \
   torch torchvision torchaudio
 
 # install graphlearning and annoy last, without letting pip replace conda-managed deps

@@ -12,6 +12,7 @@ dependencies:
   - scikit-learn
   - matplotlib
   - pillow
+  - seaborn
 
   # requested direct deps / useful explicit pins
   - cycler
