@@ -10,12 +10,17 @@
 # - The active-learning loop itself is CPU-bound and parallelized with joblib.
 # - Request a GPU only when your config uses representation.type: nn, because that
 #   is the only path in the current code that can train on CUDA.
+# - 30 iterations on 9 cpus over 3 seeds for 4 methods ran in 8 minutes (0.3 CPU Utilization)
+# - 30 iterations on 6 cpus over 3 seeds for 4 methods ran in 8 minutes (0.5 CPU Utilization)
+# - 30 iterations on 3 cpus over 3 seeds for 4 methods ran in 10 minutes (0.6 CPU Utilization - but need to up memory)
+# - 80 iterations on 6 cpus over 3 seeds for 4 methods ran in 15 minutes (0.6 CPU Utilization and Memory)
+# - 80 iterations on 6 cpus over 3 seeds for 4 methods ran in 16 minutes (0.6 CPU Utilization and Memory - no GPU)
 
 #SBATCH -J "rwll-al"
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=8
-#SBATCH --time=00:10:00
+#SBATCH --cpus-per-task=6
+#SBATCH --time=00:30:00
 #SBATCH --mem-per-cpu=1024M
 #SBATCH --output=logs/%x-%j.out
 #SBATCH --error=logs/%x-%j.err
@@ -38,7 +43,7 @@ mkdir -p logs
 : "${METRIC:=vae}"
 : "${CONFIG:=config_mlp.yaml}"
 : "${RESULTSDIR:=results}"
-: "${ITERS:=10}"
+: "${ITERS:=80}"
 : "${K:=0}"
 : "${CHEATK:=50}"
 : "${NUMCORES:=${SLURM_CPUS_PER_TASK:-1}}"
