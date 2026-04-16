@@ -1,4 +1,3 @@
-#utils_representations.py
 import graphlearning as gl
 import numpy as np
 from sklearn.decomposition import PCA
@@ -7,6 +6,7 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, TensorDataset
 
+NN_TRAIN_CALL_COUNT = 0
 
 def get_representation_config(config: dict) -> dict:
     """
@@ -22,6 +22,20 @@ def get_representation_config(config: dict) -> dict:
     if nn_name not in {"mlp", "cnn"}:
         raise ValueError(f"Unknown nn_name: {nn_name}")
 
+    nn_num_hidden_layers = int(rep.get("nn_num_hidden_layers", 4))
+    nn_hidden_dim_raw = rep.get("nn_hidden_dim", 128)
+
+    if isinstance(nn_hidden_dim_raw, list):
+        nn_hidden_dims = [int(x) for x in nn_hidden_dim_raw]
+        if len(nn_hidden_dims) != nn_num_hidden_layers:
+            raise ValueError(
+                f"If nn_hidden_dim is a list, its length must equal "
+                f"nn_num_hidden_layers={nn_num_hidden_layers}. "
+                f"Got {len(nn_hidden_dims)} entries."
+            )
+    else:
+        nn_hidden_dims = [int(nn_hidden_dim_raw)] * nn_num_hidden_layers
+
     return {
         "type": rep_type,
         "noise_std": float(rep.get("noise_std", 0.05)),
@@ -29,17 +43,28 @@ def get_representation_config(config: dict) -> dict:
 
         "nn_name": nn_name,
         "nn_layer": int(rep.get("nn_layer", 4)),
-        "nn_hidden_dim": int(rep.get("nn_hidden_dim", 128)),
-        "nn_num_hidden_layers": int(rep.get("nn_num_hidden_layers", 4)),
+        "nn_hidden_dim": nn_hidden_dims,
+        "nn_num_hidden_layers": nn_num_hidden_layers,
         "nn_epochs": int(rep.get("nn_epochs", 20)),
         "nn_batch_size": int(rep.get("nn_batch_size", 64)),
         "nn_lr": float(rep.get("nn_lr", 1e-3)),
+        "nn_update_interval": int(rep.get("nn_update_interval", 0)),
 
         "random_seed": int(rep.get("random_seed", 0)),
     }
 
+
+def get_nn_update_interval(rep_cfg: dict) -> int:
+    return int(rep_cfg.get("nn_update_interval", 0))
+
+
 def representation_depends_on_seed(rep_cfg: dict) -> bool:
     return rep_cfg["type"] == "nn"
+
+
+def representation_is_dynamic(rep_cfg: dict) -> bool:
+    return rep_cfg["type"] == "nn" and get_nn_update_interval(rep_cfg) > 0
+
 
 def get_representation_tag(rep_cfg: dict) -> str:
     """
@@ -63,20 +88,30 @@ def get_representation_tag(rep_cfg: dict) -> str:
     if rep_type == "nn":
         nn_name = rep_cfg["nn_name"]
         nn_layer = rep_cfg["nn_layer"]
-        hidden_dim = rep_cfg["nn_hidden_dim"]
+        hidden_dims = rep_cfg["nn_hidden_dim"]
         num_hidden_layers = rep_cfg["nn_num_hidden_layers"]
         epochs = rep_cfg["nn_epochs"]
         lr = str(rep_cfg["nn_lr"]).replace(".", "p")
         seed = rep_cfg.get("random_seed", 0)
-        return (
+
+        if len(set(hidden_dims)) == 1:
+            hidden_part = f"H{hidden_dims[0]}"
+        else:
+            hidden_part = "Hvar"
+
+        tag = (
             f"nn_{nn_name}"
             f"_L{num_hidden_layers}"
-            f"_H{hidden_dim}"
+            f"_{hidden_part}"
             f"_h{nn_layer}"
             f"_e{epochs}"
             f"_lr{lr}"
             f"_s{seed}"
         )
+        update_interval = get_nn_update_interval(rep_cfg)
+        if update_interval > 0:
+            tag += f"_upd{update_interval}"
+        return tag
 
     raise ValueError(f"Unknown representation type: {rep_type}")
 
@@ -86,24 +121,25 @@ class MLPEmbeddingNet(nn.Module):
     def __init__(
         self,
         input_dim: int,
-        hidden_dim: int,
+        hidden_dims: list[int],
         num_classes: int,
-        num_hidden_layers: int = 4,
     ):
         super().__init__()
 
-        if num_hidden_layers < 1:
-            raise ValueError(f"num_hidden_layers must be >= 1, got {num_hidden_layers}")
+        if len(hidden_dims) < 1:
+            raise ValueError("hidden_dims must contain at least one layer width.")
 
-        self.num_hidden_layers = num_hidden_layers
+        self.num_hidden_layers = len(hidden_dims)
 
         self.hidden_layers = nn.ModuleList()
-        self.hidden_layers.append(nn.Linear(input_dim, hidden_dim))
-        for _ in range(num_hidden_layers - 1):
-            self.hidden_layers.append(nn.Linear(hidden_dim, hidden_dim))
+
+        prev_dim = input_dim
+        for hdim in hidden_dims:
+            self.hidden_layers.append(nn.Linear(prev_dim, hdim))
+            prev_dim = hdim
 
         self.relu = nn.ReLU()
-        self.classifier = nn.Linear(hidden_dim, num_classes)
+        self.classifier = nn.Linear(hidden_dims[-1], num_classes)
 
     def get_embedding(self, x: torch.Tensor, layer: int) -> torch.Tensor:
         if layer < 1 or layer > self.num_hidden_layers:
@@ -125,14 +161,20 @@ class MLPEmbeddingNet(nn.Module):
             x = self.relu(x)
         return self.classifier(x)
 
+
 def get_torch_device() -> torch.device:
     return torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
 
 def train_mlp_embedding_model(
     X_labeled: np.ndarray,
     y_labeled: np.ndarray,
     rep_cfg: dict,
 ) -> MLPEmbeddingNet:
+    global NN_TRAIN_CALL_COUNT
+    NN_TRAIN_CALL_COUNT += 1
+    print(f"[NN] TRAIN CALL #{NN_TRAIN_CALL_COUNT}")
+    
     if rep_cfg["nn_name"] != "mlp":
         raise NotImplementedError(f"NN type '{rep_cfg['nn_name']}' is not implemented yet.")
 
@@ -146,18 +188,16 @@ def train_mlp_embedding_model(
 
     input_dim = X_labeled.shape[1]
     num_classes = len(np.unique(y_labeled))
-    hidden_dim = rep_cfg["nn_hidden_dim"]
+    hidden_dims = rep_cfg["nn_hidden_dim"]
     num_hidden_layers = rep_cfg["nn_num_hidden_layers"]
     epochs = rep_cfg["nn_epochs"]
     batch_size = rep_cfg["nn_batch_size"]
     lr = rep_cfg["nn_lr"]
 
-
     model = MLPEmbeddingNet(
         input_dim=input_dim,
-        hidden_dim=hidden_dim,
+        hidden_dims=hidden_dims,
         num_classes=num_classes,
-        num_hidden_layers=num_hidden_layers,
     ).to(device)
 
     dataset = TensorDataset(
@@ -172,13 +212,13 @@ def train_mlp_embedding_model(
 
     optimizer = torch.optim.Adam(
         model.parameters(),
-        lr=lr
+        lr=lr,
     )
     criterion = nn.CrossEntropyLoss()
 
     print(f"[NN] Training {rep_cfg['nn_name']} on {len(X_labeled)} labeled points")
     print(
-        f"[NN] device={device}, input_dim={input_dim}, hidden_dim={hidden_dim}, "
+        f"[NN] device={device}, input_dim={input_dim}, hidden_dims={hidden_dims}, "
         f"num_hidden_layers={num_hidden_layers}, num_classes={num_classes}"
     )
     print(
@@ -210,6 +250,7 @@ def train_mlp_embedding_model(
 
     return model
 
+
 def extract_mlp_embeddings(
     model: MLPEmbeddingNet,
     X_all: np.ndarray,
@@ -226,21 +267,41 @@ def extract_mlp_embeddings(
 
     return emb
 
+
+def train_embedding_model(
+    X_labeled: np.ndarray,
+    y_labeled: np.ndarray,
+    rep_cfg: dict,
+):
+    if rep_cfg["nn_name"] == "mlp":
+        return train_mlp_embedding_model(X_labeled, y_labeled, rep_cfg)
+    if rep_cfg["nn_name"] == "cnn":
+        raise NotImplementedError("CNN is not implemented yet.")
+    raise ValueError(f"Unknown nn_name: {rep_cfg['nn_name']}")
+
+
+def extract_embeddings(
+    model,
+    X_all: np.ndarray,
+    rep_cfg: dict,
+) -> np.ndarray:
+    if rep_cfg["nn_name"] == "mlp":
+        return extract_mlp_embeddings(model, X_all, int(rep_cfg["nn_layer"]))
+    if rep_cfg["nn_name"] == "cnn":
+        raise NotImplementedError("CNN is not implemented yet.")
+    raise ValueError(f"Unknown nn_name: {rep_cfg['nn_name']}")
+
+
 def get_base_features(dataset, metric):
     X, clusters = gl.datasets.load(dataset.split("-")[0], metric=metric)
     return X, clusters
 
+
 def get_regular_features(X: np.ndarray, rep_cfg: dict | None = None) -> np.ndarray:
-    """
-    Baseline representation: unchanged features.
-    """
     return np.asarray(X, dtype=float)
 
 
 def get_noisy_features(X: np.ndarray, rep_cfg: dict) -> np.ndarray:
-    """
-    Add Gaussian noise to features.
-    """
     X = np.asarray(X, dtype=float)
     noise_std = rep_cfg["noise_std"]
     seed = rep_cfg.get("random_seed", 0)
@@ -251,9 +312,6 @@ def get_noisy_features(X: np.ndarray, rep_cfg: dict) -> np.ndarray:
 
 
 def get_pca_features(X: np.ndarray, rep_cfg: dict) -> np.ndarray:
-    """
-    PCA representation.
-    """
     X = np.asarray(X, dtype=float)
     n_components = rep_cfg["pca_components"]
     seed = rep_cfg.get("random_seed", 0)
@@ -270,18 +328,8 @@ def get_pca_features(X: np.ndarray, rep_cfg: dict) -> np.ndarray:
 
 
 def get_nn_features(X: np.ndarray, rep_cfg: dict, labels=None, labeled_ind=None) -> np.ndarray:
-    """
-    Train a fixed NN once on the initial labeled set and use the chosen hidden
-    layer embedding for all points.
-    """
     if labels is None or labeled_ind is None:
         raise ValueError("NN representation requires labels and labeled_ind.")
-
-    if rep_cfg["nn_name"] == "cnn":
-        raise NotImplementedError("CNN is not implemented yet.")
-
-    if rep_cfg["nn_name"] != "mlp":
-        raise ValueError(f"Unknown nn_name: {rep_cfg['nn_name']}")
 
     layer = int(rep_cfg["nn_layer"])
     num_hidden_layers = int(rep_cfg["nn_num_hidden_layers"])
@@ -294,9 +342,9 @@ def get_nn_features(X: np.ndarray, rep_cfg: dict, labels=None, labeled_ind=None)
     X = np.asarray(X, dtype=np.float32)
     labeled_ind = np.asarray(labeled_ind, dtype=int)
 
-    model = train_mlp_embedding_model(X[labeled_ind], labels[labeled_ind], rep_cfg)
+    model = train_embedding_model(X[labeled_ind], labels[labeled_ind], rep_cfg)
     print(f"[NN] Finished training. Extracting hidden layer {layer} embeddings.")
-    X_emb = extract_mlp_embeddings(model, X, layer)
+    X_emb = extract_embeddings(model, X, rep_cfg)
 
     return X_emb
 
@@ -308,9 +356,6 @@ def apply_representation(
     labels=None,
     labeled_ind=None,
 ) -> np.ndarray:
-    """
-    Transform base features according to the representation config.
-    """
     rep_type = rep_cfg["type"]
 
     if rep_type == "regular":
@@ -339,11 +384,6 @@ def get_features(
     labels=None,
     labeled_ind=None,
 ):
-    """
-    Load base features and apply the selected representation.
-    Returns:
-        X_rep, clusters
-    """
     X, clusters = get_base_features(dataset, metric)
     X_rep = apply_representation(
         X,

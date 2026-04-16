@@ -18,6 +18,7 @@ from utils_representations import (
     get_representation_config,
     get_representation_tag,
     representation_depends_on_seed,
+    representation_is_dynamic
 )
 
 from joblib import Parallel, delayed
@@ -42,11 +43,47 @@ if __name__ == "__main__":
     rep_cfg = get_representation_config(config)
     rep_tag = get_representation_tag(rep_cfg)
     print("Using representation:", rep_tag)
+    dynamic_rep = representation_is_dynamic(rep_cfg)
+    print("Dynamic representation:", dynamic_rep)
     rate = config.get("initial_labels_per_class", 1)
 
     model_names = [name for name in config["acc_models"] if name[:3] != "gcn"]
     results_directories = glob(os.path.join(args.resultsdir, f"{args.dataset}_{rep_tag}_r{rate}_results_*_{args.iters}/"))
     acqs_models = config["acqs_models"]
+    if dynamic_rep:
+        for out_num, RESULTS_DIR in enumerate(results_directories):
+            print(f"[DYNAMIC] Consolidating existing accuracy files in {RESULTS_DIR} ({out_num+1}/{len(results_directories)})")
+            for acc_model_name in model_names:
+                acc_dir = os.path.join(RESULTS_DIR, acc_model_name)
+                if not os.path.exists(acc_dir):
+                    continue
+
+                accs_fnames = glob(os.path.join(acc_dir, "acc_*.npy"))
+                columns = {}
+                max_length = 0
+
+                for fname in accs_fnames:
+                    acc = np.load(fname)
+                    base = os.path.basename(fname)
+                    acq_func_name, modelname = base[len("acc_"):].rsplit("_", 1)
+                    modelname = modelname.split(".")[0]
+                    columns[acq_func_name + " : " + modelname] = acc
+                    if acc.size > max_length:
+                        max_length = acc.size
+
+                for k, col in columns.items():
+                    if col.size < max_length:
+                        columns[k] = np.concatenate((col, np.full(max_length - col.size, fill_value=np.nan)))
+
+                if columns:
+                    acc_df = pd.DataFrame(columns)
+                    acc_df.to_csv(os.path.join(acc_dir, "accs.csv"), index=None)
+
+            print("-" * 40)
+            print("-" * 40)
+
+        print()
+        raise SystemExit
 
     # For seed-independent reps, build the graph/models once.
     # For seed-dependent reps (nn), build them inside the RESULTS_DIR loop.

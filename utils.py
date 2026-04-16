@@ -6,10 +6,13 @@ import scipy.sparse as sparse
 from copy import deepcopy
 import acquisitions
 
-from utils_representations import apply_representation, get_base_features, get_representation_tag, representation_depends_on_seed
-
-# Trying basic pca before NN test
-from sklearn.decomposition import PCA
+from utils_representations import (
+    apply_representation,
+    get_base_features,
+    get_representation_tag,
+    representation_depends_on_seed,
+    representation_is_dynamic
+)
 
 
 def get_models(G, model_names):
@@ -23,6 +26,8 @@ def get_models(G, model_names):
 
     return [deepcopy(MODELS[name]) for name in model_names]
 
+def get_model(G, model_name):
+    return get_models(G, [model_name])[0]
 
 def load_graph(dataset, metric, numeigs=200, data_dir="data", returnX=False, returnK=False, knn=0, rep_cfg=None, labeled_ind=None, seed=None, rate=1):
     # New data loading
@@ -127,6 +132,58 @@ def load_graph(dataset, metric, numeigs=200, data_dir="data", returnX=False, ret
         return G, labels, trainset, normalization, np.unique(clusters).size
     
     return G, labels, trainset, normalization
+
+
+def build_graph_from_features(X, labels, dataset, metric, knn=0):
+    """
+    Build a graph directly from features in memory, with no file caching.
+    Returns:
+        G, trainset, normalization
+    """
+    if dataset.split("-")[0] == 'mstar':
+        trainset = None
+    elif metric == "hsi":
+        trainset = np.where(labels != 0)[0]
+    else:
+        trainset = None
+
+    if knn == 0:
+        knn = 20
+        if dataset == 'isolet':
+            print("Using knn = 5 for Isolet")
+            knn = 5
+        elif dataset in ['box', 'blobs']:
+            print(f"knn = 100, {dataset}")
+            knn = 100
+
+    normalization = "combinatorial"
+    if dataset.split("-")[0] in [
+        "mnist", "fashionmnist", "cifar", "emnist", "mnistsmall",
+        "fashionmnistsmall", "salinassub", "paviasub", "mnistimb",
+        "fashionmnistimb", "emnistvcd"
+    ]:
+        normalization = "normalized"
+
+    if metric == "hsi":
+        sim_name = "angular"
+    else:
+        sim_name = "euclidean"
+
+    print("[DYNAMIC GRAPH] Building in-memory graph")
+    print(f"[DYNAMIC GRAPH] X shape = {X.shape}")
+    print(f"[DYNAMIC GRAPH] knn = {knn}")
+
+    knn_ind, knn_dist = gl.weightmatrix.knnsearch(
+        X,
+        knn,
+        similarity=sim_name,
+        metric=metric,
+        dataset=dataset.split("-")[0],
+    )
+    W = gl.weightmatrix.knn(X, knn, knn_data=(knn_ind, knn_dist), metric=metric)
+    G = gl.graph(W)
+
+    return G, trainset, normalization
 
 
 def get_eig_data(G, normalization, numeigs):
@@ -259,3 +316,52 @@ def get_graph_and_models(acq_funcs_names, model_names, args, rep_cfg=None, label
     models = get_models(G, model_names)
     
     return models, labels, trainset, normalization,  K
+
+
+def build_dynamic_graph_and_models(acq_funcs_names, model_names, args, rep_cfg, labeled_ind):
+    """
+    Rebuild representation, graph, and models from the CURRENT labeled set.
+    No persistent graph caching is used.
+    """
+    X_base, clusters = get_base_features(args.dataset, args.metric)
+
+    if args.dataset.split("-")[-1] == 'evenodd':
+        labels = clusters % 2
+    elif args.dataset.split("-")[-1][:3] == "mod":
+        modnum = int(args.dataset[-1])
+        labels = clusters % modnum
+    else:
+        labels = clusters
+
+    X_rep = apply_representation(
+        X_base,
+        rep_cfg,
+        labels=labels,
+        labeled_ind=labeled_ind,
+    )
+
+    G, trainset, normalization = build_graph_from_features(
+        X_rep,
+        labels,
+        args.dataset,
+        args.metric,
+        knn=args.knn,
+    )
+
+    maxnumeigs = 0
+    for acq_func_name in acq_funcs_names:
+        if len(acq_func_name.split("-")) == 1:
+            continue
+        d = acq_func_name.split("-")[-1]
+        if len(d) > 0:
+            if maxnumeigs < int(d):
+                maxnumeigs = int(d)
+
+    if maxnumeigs > 0:
+        method = "exact" if labels.size < 100000 else "lowrank"
+        print(f"[DYNAMIC GRAPH] Precomputing {maxnumeigs} eigenpairs ({normalization}, {method})")
+        G.eigen_decomp(normalization=normalization, k=maxnumeigs, method=method)
+
+    models = get_models(G, model_names)
+    K = np.unique(clusters).size
+    return models, labels, trainset, normalization, K
