@@ -2,23 +2,27 @@ acqs_models:
   - "random rwll"
   - "unc rwll"
   - "uncnorm rwll"
-  - "uncnormdecaytau rwll"
+  - "uncnormdecaytau rwll0010"
 
 acc_models:
   - "rwll"
+  - "rwll0010"
 
 seeds: [2, 3, 5]
 
 representation:
-  type: nn
+  type: nn_batch_size       # Supports regular, noise, pca, nn
   random_seed: 0
 
+  pca_components: 10
+
   nn_name: mlp
-  nn_layer: 4
-  nn_hidden_dim: 128
-  nn_num_hidden_layers: 4
+  nn_layer: 3
+  nn_hidden_dim: [128, 128, 64, 128, 32]    # List must have length nn_num_hidden_layers, a single number works too if you want the network to have a fixed width
+  nn_num_hidden_layers: 5
   nn_epochs: 30
   nn_batch_size: 64
   nn_lr: 0.001
+  nn_update_interval: 1     # If missing or 0, then graph is static
 
-initial_labels_per_class: 1
+initial_labels_per_class: 5
