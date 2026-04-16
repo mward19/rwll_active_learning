@@ -5,6 +5,7 @@ from sklearn.decomposition import PCA
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, TensorDataset
+import os
 
 NN_TRAIN_CALL_COUNT = 0
 
@@ -163,7 +164,33 @@ class MLPEmbeddingNet(nn.Module):
 
 
 def get_torch_device() -> torch.device:
-    return torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    if not torch.cuda.is_available():
+        print("[NN] CUDA is not available. Falling back to CPU.")
+        return torch.device("cpu")
+
+    if os.environ.get("CUDA_VISIBLE_DEVICES", "") == "":
+        print("[NN] CUDA_VISIBLE_DEVICES is empty. Falling back to CPU.")
+        return torch.device("cpu")
+
+    try:
+        dev_idx = torch.cuda.current_device()
+        major, minor = torch.cuda.get_device_capability(dev_idx)
+        device_name = torch.cuda.get_device_name(dev_idx)
+        sm_tag = f"sm_{major}{minor}"
+        arch_list = torch.cuda.get_arch_list() if hasattr(torch.cuda, "get_arch_list") else []
+
+        if arch_list and sm_tag not in arch_list:
+            print(
+                f"[NN] GPU '{device_name}' has CC {major}.{minor} ({sm_tag}), "
+                f"but this PyTorch build supports {arch_list}. Falling back to CPU."
+            )
+            return torch.device("cpu")
+
+        print(f"[NN] Using CUDA device {dev_idx}: {device_name} (CC {major}.{minor})")
+        return torch.device("cuda")
+    except Exception as exc:
+        print(f"[NN] CUDA capability check failed ({exc}). Falling back to CPU.")
+        return torch.device("cpu")
 
 
 def train_mlp_embedding_model(
