@@ -15,6 +15,7 @@ eval "$(mamba shell hook --shell bash)"
 mamba activate rwll_env
 
 # install the torch stack from the official CUDA 12.6 wheel index for the P100s
+# Switch to https://download.pytorch.org/whl/cu128 if moving to preemptable with A100s
 python -m pip install --index-url https://download.pytorch.org/whl/cu126 \
   torch torchvision torchaudio
 

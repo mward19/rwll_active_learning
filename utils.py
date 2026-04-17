@@ -96,53 +96,18 @@ def load_graph(dataset, metric, numeigs=200, data_dir="data", returnX=False, ret
     
     print(f"Eigendata calculation will be {method}")
 
+    print(f"Graph Filename: {graph_filename}")
+
     try:
         G = gl.graph.load(graph_filename)
-        if G.num_nodes != X.shape[0]:
-            print(
-                f"[GRAPH] Cached graph size mismatch for {graph_filename}: "
-                f"cached={G.num_nodes}, expected={X.shape[0]}. Rebuilding."
-            )
-            raise ValueError("Cached graph has incompatible size.")
         found = True
     except:
         if metric == "hsi":
             sim_name ="angular" # LAND does 100 in HSI
         else:
             sim_name = "euclidean"
-        base_dataset = dataset.split("-")[0]
+        knn_ind, knn_dist = gl.weightmatrix.knnsearch(X, knn, similarity=sim_name, metric=metric, dataset=dataset.split("-")[0])
 
-        # Prefer precomputed kNN data when available; this avoids running ANN code
-        # on cluster nodes and is typically much faster.
-        try:
-            knn_ind, knn_dist = gl.weightmatrix.load_knn_data(base_dataset, metric=metric)
-            if knn_ind.shape[0] != X.shape[0]:
-                raise ValueError(
-                    f"Precomputed kNN size mismatch: {knn_ind.shape[0]} vs {X.shape[0]}"
-                )
-            print(f"[GRAPH] Loaded precomputed kNN data for {base_dataset} ({metric})")
-        except Exception:
-            # Allow forcing a safer backend (e.g., kdtree) to avoid native ANN crashes
-            # on heterogeneous clusters.
-            knn_method = os.environ.get("GL_KNN_METHOD", "").strip().lower()
-            if knn_method:
-                print(f"[GRAPH] Using knnsearch method override: {knn_method}")
-                knn_ind, knn_dist = gl.weightmatrix.knnsearch(
-                    X,
-                    knn,
-                    method=knn_method,
-                    similarity=sim_name,
-                    metric=metric,
-                    dataset=base_dataset,
-                )
-            else:
-                knn_ind, knn_dist = gl.weightmatrix.knnsearch(
-                    X,
-                    knn,
-                    similarity=sim_name,
-                    metric=metric,
-                    dataset=base_dataset,
-                )
         W = gl.weightmatrix.knn(X, knn, knn_data=(knn_ind, knn_dist), metric=metric)
         G = gl.graph(W)
         found = False
