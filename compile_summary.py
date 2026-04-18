@@ -24,7 +24,8 @@ def print_jupyter_snippet(args):
     print(f'    iters={iters},')
     print('    modelname="rwll",')
     print(f'    resultsdir="{resultsdir}",')
-    print(f'    config_path="{config_path}",')
+    print(f'    config_path="temp.yaml",')
+    print(f"    slurm_id={os.environ.get("SLURM_JOB_ID")}")
     print(")\n")
 
     print("plot_summary(")
@@ -32,10 +33,10 @@ def print_jupyter_snippet(args):
     print(f'    iters={iters},')
     print('    modelname="rwll",')
     print(f'    resultsdir="{resultsdir}",')
-    print(f'    config_path="{config_path}",')
+    print(f'    config_path="temp.yaml",')
     print("    show_std=True,")
+    print(f"    slurm_id={os.environ.get("SLURM_JOB_ID")}")
     print(")\n")
-
     print("="*60 + "\n")
 
 def write_run_info_file(args, overall_dir):
@@ -75,6 +76,8 @@ def write_run_info_file(args, overall_dir):
         f.write(cmd_test + "\n")
         f.write(cmd_acc + "\n")
         f.write(cmd_summary + "\n\n")
+
+        f.write(f"SLURMID: {os.environ.get("SLURM_JOB_ID")}\n\n")
 
         f.write("=" * 60 + "\n")
         f.write("CONFIG FILE\n")

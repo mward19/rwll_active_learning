@@ -5,6 +5,8 @@ from typing import Iterable
 import matplotlib.pyplot as plt
 import pandas as pd
 import yaml
+import subprocess
+import re
 
 from utils_representations import get_representation_config, get_representation_tag
 
@@ -59,9 +61,23 @@ def plot_summary(
     methods: Iterable[str] | None = None,
     show_std: bool = True,
     title: str | None = None,
+    slurm_id: str | None = None
 ) -> None:
-    df = _load_summary(resultsdir, dataset, iters, modelname, config_path=config_path)
-    _, rep_tag, rate = _get_rep_info(config_path)
+    # getting the correct file path
+    path = subprocess.run(['grep','-ril',f'{slurm_id}','./results'],capture_output=True, text=True).stdout.strip()
+
+    with open(path,'r') as f:
+        data = f.read()
+
+    yaml_text = re.search("acqs_models[\s\S]*",data).group(0)
+
+    with open('temp.yaml','w') as f:
+        f.write(yaml_text) 
+
+    base_path = path.split('/')[:-1]
+    df = pd.read_csv('/'.join(base_path) + '/rwll_stats.csv')
+    # df = _load_summary(resultsdir, dataset, iters, modelname, config_path=config_path)
+    _, rep_tag, rate = _get_rep_info("temp.yaml")
     all_methods = _get_method_names(df)
 
     if methods is None:
@@ -102,8 +118,12 @@ def list_methods(
     modelname: str,
     resultsdir: str = "results",
     config_path: str = "./config.yaml",
+    slurm_id: str | None = None
 ) -> list[str]:
-    df = _load_summary(resultsdir, dataset, iters, modelname, config_path=config_path)
+    path = subprocess.run(['grep','-ril',f'{slurm_id}','./results'],capture_output=True, text=True).stdout.strip()
+    df = pd.read_csv(path)
+
+    # df = _load_summary(resultsdir, dataset, iters, modelname, config_path=config_path)
     methods = _get_method_names(df)
     print("\n".join(methods))
     return methods
