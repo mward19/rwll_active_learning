@@ -52,6 +52,7 @@ def get_representation_config(config: dict) -> dict:
         "nn_update_interval": int(rep.get("nn_update_interval", 0)),
 
         "random_seed": int(rep.get("random_seed", 0)),
+        "cnn_extra_convs": int(rep.get("cnn_extra_convs", 0)),
     }
 
 
@@ -89,26 +90,46 @@ def get_representation_tag(rep_cfg: dict) -> str:
     if rep_type == "nn":
         nn_name = rep_cfg["nn_name"]
         nn_layer = rep_cfg["nn_layer"]
-        hidden_dims = rep_cfg["nn_hidden_dim"]
-        num_hidden_layers = rep_cfg["nn_num_hidden_layers"]
         epochs = rep_cfg["nn_epochs"]
         lr = str(rep_cfg["nn_lr"]).replace(".", "p")
         seed = rep_cfg.get("random_seed", 0)
 
-        if len(set(hidden_dims)) == 1:
-            hidden_part = f"H{hidden_dims[0]}"
-        else:
-            hidden_part = "Hvar"
+        if nn_name == "mlp":
+            hidden_dims = rep_cfg["nn_hidden_dim"]
+            num_hidden_layers = rep_cfg["nn_num_hidden_layers"]
 
-        tag = (
-            f"nn_{nn_name}"
-            f"_L{num_hidden_layers}"
-            f"_{hidden_part}"
-            f"_h{nn_layer}"
-            f"_e{epochs}"
-            f"_lr{lr}"
-            f"_s{seed}"
-        )
+            if len(set(hidden_dims)) == 1:
+                hidden_part = f"H{hidden_dims[0]}"
+            else:
+                hidden_part = "Hvar"
+
+            tag = (
+                f"nn_{nn_name}"
+                f"_L{num_hidden_layers}"
+                f"_{hidden_part}"
+                f"_h{nn_layer}"
+                f"_e{epochs}"
+                f"_lr{lr}"
+                f"_s{seed}"
+            )
+
+        elif nn_name == "cnn":
+            extra_convs = rep_cfg["cnn_extra_convs"]
+            total_layers = 3 + extra_convs
+            epochs = rep_cfg["nn_epochs"]
+            lr = str(rep_cfg["nn_lr"]).replace(".", "p")
+            tag = (
+                f"nn_{nn_name}"
+                f"_L{total_layers}"
+                f"_h{nn_layer}"
+                f"_e{epochs}"
+                f"_lr{lr}"
+                f"_s{seed}"
+            )
+
+        else:
+            raise ValueError(f"Unknown nn_name: {nn_name}")
+
         update_interval = get_nn_update_interval(rep_cfg)
         if update_interval > 0:
             tag += f"_upd{update_interval}"
@@ -161,7 +182,82 @@ class MLPEmbeddingNet(nn.Module):
             x = linear(x)
             x = self.relu(x)
         return self.classifier(x)
+    
 
+class CNNEmbeddingNet(nn.Module):
+    def __init__(self, num_classes: int, extra_convs: int = 0):
+        super().__init__()
+
+        self.blocks = nn.ModuleList()
+
+        # Block 1
+        self.blocks.append(nn.Sequential(
+            nn.Conv2d(1, 32, 3, padding=1),
+            nn.ReLU(),
+            nn.MaxPool2d(2)
+        ))
+
+        # Block 2
+        self.blocks.append(nn.Sequential(
+            nn.Conv2d(32, 64, 3, padding=1),
+            nn.ReLU(),
+            nn.MaxPool2d(2)
+        ))
+
+        # Block 3
+        self.blocks.append(nn.Sequential(
+            nn.Conv2d(64, 128, 3, padding=1),
+            nn.ReLU()
+        ))
+
+        # Extra conv layers (same width)
+        for _ in range(extra_convs):
+            self.blocks.append(nn.Sequential(
+                nn.Conv2d(128, 128, 3, padding=1),
+                nn.ReLU()
+            ))
+
+        self.num_layers = len(self.blocks)
+
+        self.classifier = nn.Linear(128, num_classes)
+
+    def forward_features(self, x):
+        features = []
+        for block in self.blocks:
+            x = block(x)
+            features.append(x)
+        return features
+
+    def get_embedding(self, x, layer: int):
+        feats = self.forward_features(x)
+
+        if layer < 1 or layer > len(feats):
+            raise ValueError(f"cnn layer must be in [1, {len(feats)}]")
+
+        x = feats[layer - 1]
+
+        # Global average pooling -> (N, C)
+        x = x.mean(dim=(2, 3))
+        return x
+
+    def forward(self, x):
+        feats = self.forward_features(x)
+        x = feats[-1]
+        x = x.mean(dim=(2, 3))
+        return self.classifier(x)
+    
+def reshape_mnist(X: np.ndarray) -> np.ndarray:
+    if X.shape[1] != 784:
+        raise ValueError("CNN currently only supports MNIST-like (784-dim) inputs.")
+    return X.reshape(-1, 1, 28, 28)
+
+# def get_torch_device() -> torch.device:
+#     if torch.cuda.is_available():
+#         print(f"[NN] Using CUDA: {torch.cuda.get_device_name(0)}")
+#         return torch.device("cuda")
+#     else:
+#         print("[NN] CUDA not available. Falling back to CPU.")
+#         return torch.device("cpu")
 
 def get_torch_device() -> torch.device:
     if not torch.cuda.is_available():
@@ -277,6 +373,84 @@ def train_mlp_embedding_model(
 
     return model
 
+def train_cnn_embedding_model(
+    X_labeled: np.ndarray,
+    y_labeled: np.ndarray,
+    rep_cfg: dict,
+):
+    global NN_TRAIN_CALL_COUNT
+    NN_TRAIN_CALL_COUNT += 1
+    print(f"[CNN] TRAIN CALL #{NN_TRAIN_CALL_COUNT}")
+
+    device = get_torch_device()
+
+    seed = rep_cfg.get("random_seed", 0)
+    torch.manual_seed(seed)
+    np.random.seed(seed)
+
+    X_labeled = reshape_mnist(np.asarray(X_labeled, dtype=np.float32))
+    y_labeled = np.asarray(y_labeled, dtype=np.int64)
+
+    num_classes = len(np.unique(y_labeled))
+    extra_convs = rep_cfg["cnn_extra_convs"]
+    epochs = rep_cfg["nn_epochs"]
+    batch_size = rep_cfg["nn_batch_size"]
+    lr = rep_cfg["nn_lr"]
+
+    model = CNNEmbeddingNet(
+        num_classes=num_classes,
+        extra_convs=extra_convs,
+    ).to(device)
+
+    dataset = TensorDataset(
+        torch.from_numpy(X_labeled),
+        torch.from_numpy(y_labeled),
+    )
+
+    loader = DataLoader(
+        dataset,
+        batch_size=min(batch_size, len(dataset)),
+        shuffle=True,
+    )
+
+    optimizer = torch.optim.Adam(model.parameters(), lr=lr)
+    criterion = nn.CrossEntropyLoss()
+
+    print(f"[CNN] Training on {len(X_labeled)} labeled points")
+
+    model.train()
+    for epoch in range(epochs):
+        total_loss = 0.0
+        total = 0
+
+        for xb, yb in loader:
+            xb = xb.to(device)
+            yb = yb.to(device)
+
+            optimizer.zero_grad()
+            logits = model(xb)
+            loss = criterion(logits, yb)
+            loss.backward()
+            optimizer.step()
+
+            total_loss += loss.item() * xb.size(0)
+            total += xb.size(0)
+
+        if epoch % 5 == 0:
+            print(f"[CNN] epoch {epoch+1}/{epochs} loss={total_loss/total:.4f}")
+
+    return model
+
+def train_embedding_model(
+    X_labeled: np.ndarray,
+    y_labeled: np.ndarray,
+    rep_cfg: dict,
+):
+    if rep_cfg["nn_name"] == "mlp":
+        return train_mlp_embedding_model(X_labeled, y_labeled, rep_cfg)
+    if rep_cfg["nn_name"] == "cnn":
+        return train_cnn_embedding_model(X_labeled, y_labeled, rep_cfg)
+    raise ValueError(f"Unknown nn_name: {rep_cfg['nn_name']}")
 
 def extract_mlp_embeddings(
     model: MLPEmbeddingNet,
@@ -295,17 +469,22 @@ def extract_mlp_embeddings(
     return emb
 
 
-def train_embedding_model(
-    X_labeled: np.ndarray,
-    y_labeled: np.ndarray,
-    rep_cfg: dict,
+def extract_cnn_embeddings(
+    model,
+    X_all: np.ndarray,
+    layer: int,
 ):
-    if rep_cfg["nn_name"] == "mlp":
-        return train_mlp_embedding_model(X_labeled, y_labeled, rep_cfg)
-    if rep_cfg["nn_name"] == "cnn":
-        raise NotImplementedError("CNN is not implemented yet.")
-    raise ValueError(f"Unknown nn_name: {rep_cfg['nn_name']}")
+    device = next(model.parameters()).device
 
+    X_all = reshape_mnist(np.asarray(X_all, dtype=np.float32))
+
+    model.eval()
+    with torch.no_grad():
+        x = torch.from_numpy(X_all).to(device)
+        emb = model.get_embedding(x, layer)
+        emb = emb.cpu().numpy()
+
+    return emb
 
 def extract_embeddings(
     model,
@@ -315,7 +494,7 @@ def extract_embeddings(
     if rep_cfg["nn_name"] == "mlp":
         return extract_mlp_embeddings(model, X_all, int(rep_cfg["nn_layer"]))
     if rep_cfg["nn_name"] == "cnn":
-        raise NotImplementedError("CNN is not implemented yet.")
+        return extract_cnn_embeddings(model, X_all, int(rep_cfg["nn_layer"]))
     raise ValueError(f"Unknown nn_name: {rep_cfg['nn_name']}")
 
 
@@ -359,11 +538,17 @@ def get_nn_features(X: np.ndarray, rep_cfg: dict, labels=None, labeled_ind=None)
         raise ValueError("NN representation requires labels and labeled_ind.")
 
     layer = int(rep_cfg["nn_layer"])
-    num_hidden_layers = int(rep_cfg["nn_num_hidden_layers"])
 
-    if layer < 1 or layer > num_hidden_layers:
+    if rep_cfg["nn_name"] == "mlp":
+        max_layers = int(rep_cfg["nn_num_hidden_layers"])
+    elif rep_cfg["nn_name"] == "cnn":
+        max_layers = 3 + int(rep_cfg["cnn_extra_convs"])
+    else:
+        raise ValueError(f"Unknown nn_name: {rep_cfg['nn_name']}")
+
+    if layer < 1 or layer > max_layers:
         raise ValueError(
-            f"nn_layer must be between 1 and nn_num_hidden_layers={num_hidden_layers}. Got {layer}."
+            f"nn_layer must be between 1 and {max_layers} for nn_name={rep_cfg['nn_name']}. Got {layer}."
         )
 
     X = np.asarray(X, dtype=np.float32)
@@ -402,7 +587,6 @@ def apply_representation(
     )
     return X_rep
 
-
 def get_features(
     dataset: str,
     metric: str,
@@ -412,6 +596,9 @@ def get_features(
     labeled_ind=None,
 ):
     X, clusters = get_base_features(dataset, metric)
+    if rep_cfg["type"] == "nn" and rep_cfg["nn_name"] == "cnn":
+        if metric != "raw":
+            raise ValueError("CNN representation requires --metric raw")
     X_rep = apply_representation(
         X,
         rep_cfg,

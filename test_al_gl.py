@@ -55,6 +55,8 @@ if __name__ == "__main__":
     if dynamic_rep:
         print("NN update interval:", nn_update_interval)
     print("Using representation:", rep_tag)
+    if rep_cfg["type"] == "nn" and rep_cfg["nn_name"] == "cnn" and args.metric != "raw":
+        raise ValueError("CNN representation requires --metric raw")
     #-----
 
 
@@ -313,7 +315,7 @@ if __name__ == "__main__":
                         candidate_ind_all = np.setdiff1d(candidate_ind_all, outlier_inds)
                 else:
                     # reuse same graph, just rebuild model cleanly
-                    current_model = type(AL.model)(AL.model.graph)
+                    current_model = get_model(AL.model.graph, model_name)
 
                     if current_tau is not None:
                         current_model.tau = np.copy(current_tau)

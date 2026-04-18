@@ -46,6 +46,8 @@ if __name__ == "__main__":
     dynamic_rep = representation_is_dynamic(rep_cfg)
     print("Dynamic representation:", dynamic_rep)
     rate = config.get("initial_labels_per_class", 1)
+    if rep_cfg["type"] == "nn" and rep_cfg["nn_name"] == "cnn" and args.metric != "raw":
+        raise ValueError("CNN representation requires --metric raw")
 
     model_names = [name for name in config["acc_models"] if name[:3] != "gcn"]
     results_directories = glob(os.path.join(args.resultsdir, f"{args.dataset}_{rep_tag}_r{rate}_results_*_{args.iters}/"))

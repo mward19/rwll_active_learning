@@ -1,0 +1,34 @@
+acqs_models:
+  - "random rwll"
+  - "unc rwll"
+  - "uncnorm rwll"
+  - "uncnormdecaytau rwll0010"
+
+acc_models:
+  - "rwll"
+  - "rwll0010"
+
+seeds: [2, 3, 5]
+
+representation:
+  type: nn       # Supports regular, noise, pca, nn
+  random_seed: 0
+
+  pca_components: 10
+
+  # General nn configs
+  nn_name: cnn      # Support mlp or cnn
+  nn_epochs: 20
+  nn_batch_size: 64
+  nn_lr: 0.001
+  nn_layer: 3
+  nn_update_interval: 1     # If missing or 0, then graph is static
+  
+  # mlp configs
+  nn_hidden_dim: [128, 128, 64, 64, 32]    # List must have length nn_num_hidden_layers, a single number works too if you want the network to have a fixed width
+  nn_num_hidden_layers: 5
+
+  # cnn configs
+  cnn_extra_convs: 0
+
+initial_labels_per_class: 5
