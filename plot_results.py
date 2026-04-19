@@ -52,6 +52,44 @@ def _get_method_names(df: pd.DataFrame) -> list[str]:
     return methods
 
 
+def get_file_path(
+        resultsdir: str = "results",
+        config_type: str="nn", 
+        nn_layer: int=2, 
+        nn_update_interval: int=0
+    ):
+    cmd = f"grep -ril 'type: regular' ./{resultsdir}"
+    if config_type == "nn":
+        cmd = f"grep -ril 'type: {config_type}' ./{resultsdir} | xargs grep -ril 'nn_layer: {nn_layer}' | xargs grep -ril 'nn_update_interval: {nn_update_interval}'"
+    result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
+    paths = result.stdout.strip().split('\n')
+
+    return paths[0]
+
+
+def get_data_from_path(path: str, decay: bool=False):
+    with open(path,'r') as f:
+        data = f.read()
+
+    yaml_text = re.search(r"acqs_models[\s\S]*",data).group(0)
+
+    with open('temp.yaml','w') as f:
+        f.write(yaml_text) 
+
+    base_path = path.split('/')[:-1]
+    df = pd.read_csv('/'.join(base_path) + '/rwll_stats.csv')
+    all_methods = _get_method_names(df)
+
+    if decay and 'uncnormdecaytau : rwll0010' not in all_methods:
+        df2 = pd.read_csv('/'.join(base_path) + '/rwll0010_stats.csv')
+        df = pd.concat([df, df2], axis=1)
+        all_methods = _get_method_names(df)
+
+    _, rep_tag, rate = _get_rep_info("temp.yaml")
+    
+    return df, rep_tag, rate, all_methods
+
+
 def plot_summary(
     dataset: str,
     iters: int,
@@ -61,24 +99,15 @@ def plot_summary(
     methods: Iterable[str] | None = None,
     show_std: bool = True,
     title: str | None = None,
-    slurm_id: str | None = None
+    config_type: str="nn",
+    nn_layer: int=2,
+    nn_update_interval: int=0,
+    decay: bool=True
 ) -> None:
     # getting the correct file path
-    path = subprocess.run(['grep','-ril',f'{slurm_id}','./results'],capture_output=True, text=True).stdout.strip()
+    path = get_file_path(resultsdir, config_type, nn_layer, nn_update_interval)
+    df, rep_tag, rate, all_methods = get_data_from_path(path, decay)
 
-    with open(path,'r') as f:
-        data = f.read()
-
-    yaml_text = re.search("acqs_models[\s\S]*",data).group(0)
-
-    with open('temp.yaml','w') as f:
-        f.write(yaml_text) 
-
-    base_path = path.split('/')[:-1]
-    df = pd.read_csv('/'.join(base_path) + '/rwll_stats.csv')
-    # df = _load_summary(resultsdir, dataset, iters, modelname, config_path=config_path)
-    _, rep_tag, rate = _get_rep_info("temp.yaml")
-    all_methods = _get_method_names(df)
 
     if methods is None:
         methods = all_methods
@@ -105,7 +134,62 @@ def plot_summary(
 
     plt.xlabel("Active Learning Step")
     plt.ylabel("Accuracy (%)")
-    plt.xticks(x)
+    plt.xticks(x[::5])
+    plt.title(title or f"{dataset} — {modelname} — {rep_tag} — r={rate}")
+    plt.legend()
+    plt.tight_layout()
+    plt.show()
+
+
+def compare_methods_across_update_intervals(
+    dataset: str,
+    iters: int,
+    modelname: str,
+    resultsdir: str = "results",
+    config_path: str = "./config.yaml",
+    method: Iterable[str] | None = None,
+    show_std: bool = True,
+    title: str | None = None,
+    config_type: str="nn",
+    nn_layer: int=2,
+    nn_update_intervals: Iterable[int]=[0,5,50],
+    decay: bool=True
+):
+    plt.figure(figsize=(9, 5))
+
+    path = get_file_path(resultsdir, config_type="regular")
+    df, rep_tag, rate, _ = get_data_from_path(path, decay)
+    x = list(range(len(df)))
+    avg_col = f"{method} : avg"
+    std_col = f"{method} : std"
+
+    y = df[avg_col]
+    plt.plot(x, y, marker="o", label=f"{method} : regular")
+
+    if show_std and std_col in df.columns:
+        s = df[std_col]
+        plt.fill_between(x, y - s, y + s, alpha=0.2)
+
+    for nn_update_interval in nn_update_intervals:
+        path = get_file_path(resultsdir, config_type, nn_layer, nn_update_interval)
+        df, rep_tag, rate, _ = get_data_from_path(path, decay)
+
+
+        x = list(range(len(df)))
+
+        avg_col = f"{method} : avg"
+        std_col = f"{method} : std"
+
+        y = df[avg_col]
+        plt.plot(x, y, marker="o", label=f"{method} : {nn_update_interval}")
+
+        if show_std and std_col in df.columns:
+            s = df[std_col]
+            plt.fill_between(x, y - s, y + s, alpha=0.2)
+
+    plt.xlabel("Active Learning Step")
+    plt.ylabel("Accuracy (%)")
+    plt.xticks(x[::5])
     plt.title(title or f"{dataset} — {modelname} — {rep_tag} — r={rate}")
     plt.legend()
     plt.tight_layout()
