@@ -174,7 +174,6 @@ def compare_methods_across_update_intervals(
         path = get_file_path(resultsdir, config_type, nn_layer, nn_update_interval)
         df, rep_tag, rate, _ = get_data_from_path(path, decay)
 
-
         x = list(range(len(df)))
 
         avg_col = f"{method} : avg"
@@ -182,6 +181,60 @@ def compare_methods_across_update_intervals(
 
         y = df[avg_col]
         plt.plot(x, y, marker="o", label=f"{method} : {nn_update_interval}")
+
+        if show_std and std_col in df.columns:
+            s = df[std_col]
+            plt.fill_between(x, y - s, y + s, alpha=0.2)
+
+    plt.xlabel("Active Learning Step")
+    plt.ylabel("Accuracy (%)")
+    plt.xticks(x[::5])
+    plt.title(title or f"{dataset} — {modelname} — {rep_tag} — r={rate}")
+    plt.legend()
+    plt.tight_layout()
+    plt.show()
+
+
+def compare_methods_across_nn_layers(
+    dataset: str,
+    iters: int,
+    modelname: str,
+    resultsdir: str = "results",
+    config_path: str = "./config.yaml",
+    method: Iterable[str] | None = None,
+    show_std: bool = True,
+    title: str | None = None,
+    config_type: str="nn",
+    nn_layers: Iterable[int]=[2,4,6,8,10,12],
+    nn_update_interval: Iterable[int]=0,
+    decay: bool=True
+):
+    plt.figure(figsize=(9, 5))
+
+    path = get_file_path(resultsdir, config_type="regular")
+    df, rep_tag, rate, _ = get_data_from_path(path, decay)
+    x = list(range(len(df)))
+    avg_col = f"{method} : avg"
+    std_col = f"{method} : std"
+
+    y = df[avg_col]
+    plt.plot(x, y, marker="o", label=f"{method} : regular")
+
+    if show_std and std_col in df.columns:
+        s = df[std_col]
+        plt.fill_between(x, y - s, y + s, alpha=0.2)
+
+    for nn_layer in nn_layers:
+        path = get_file_path(resultsdir, config_type, nn_layer, nn_update_interval)
+        df, rep_tag, rate, _ = get_data_from_path(path, decay)
+
+        x = list(range(len(df)))
+
+        avg_col = f"{method} : avg"
+        std_col = f"{method} : std"
+
+        y = df[avg_col]
+        plt.plot(x, y, marker="o", label=f"{method} : {nn_layer}")
 
         if show_std and std_col in df.columns:
             s = df[std_col]
